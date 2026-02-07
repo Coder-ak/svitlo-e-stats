@@ -1,12 +1,24 @@
 export type AccessStatsResponse = {
-  meta?: {
-    availableMin?: string;
-    availableMax?: string;
-    totalHits?: number;
+  meta: {
+    startTime: string;
+    endTime: string;
+    rangeSec: number;
+    binSec: number;
+    types: string[];
+    availableMin: string;
+    availableMax: string;
+    generatedAt: string;
   };
   bins: number[];
-  countsByType?: Record<string, number[]>;
+  countsByType: Record<string, number[]>;
   total: number[];
+};
+
+export type RangeOption = {
+  id: string;
+  label: string;
+  seconds: number;
+  binSec: number;
 };
 
 export type SummaryStatsResponse = {
@@ -19,12 +31,6 @@ export type SummaryStatsResponse = {
   uniqueGroups: number;
   totalUserHits: number;
   totalGroupHits: number;
-};
-
-export type RangeOption = {
-  id: string;
-  label: string;
-  seconds: number;
 };
 
 export type CardItem = {

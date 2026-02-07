@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FC } from "react";
 import type { SummaryStatsResponse } from "../types";
+import { TYPE_LABELS } from "../const/typeLabels";
 
 const SUMMARY_ENDPOINT = `${import.meta.env.VITE_API_PATH}/total`;
-
-const TYPE_LABELS: Record<string, string> = {
-  na: "Unknown",
-  cl: "Chat /light",
-  cs: "Chat /schedule",
-  ql: "Query light",
-  qs: "Query schedule",
-  qi: "Query info",
-};
 
 function buildSummaryUrl(refresh: boolean) {
   const url = new URL(SUMMARY_ENDPOINT, window.location.origin);
@@ -27,39 +19,36 @@ const TotalsSection: FC = () => {
   const [loading, setLoading] = useState(true);
   const requestIdRef = useRef(0);
 
-  const loadSummary = useCallback(
-    async (refresh: boolean) => {
-      const requestId = ++requestIdRef.current;
-      if (refresh) {
-        setLoading(true);
-        setError(null);
+  const loadSummary = useCallback(async (refresh: boolean) => {
+    const requestId = ++requestIdRef.current;
+    if (refresh) {
+      setLoading(true);
+      setError(null);
+    }
+    try {
+      const response = await fetch(buildSummaryUrl(refresh));
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
       }
-      try {
-        const response = await fetch(buildSummaryUrl(refresh));
-        if (!response.ok) {
-          throw new Error(`Request failed: ${response.status}`);
-        }
-        const data = (await response.json()) as SummaryStatsResponse;
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-        setSummary(data);
-        setError(null);
-      } catch (err) {
-        if (requestId !== requestIdRef.current) {
-          return;
-        }
-        const message =
-          err instanceof Error ? err.message : "Failed to load summary.";
-        setError(message);
-      } finally {
-        if (requestId === requestIdRef.current) {
-          setLoading(false);
-        }
+      const data = (await response.json()) as SummaryStatsResponse;
+      if (requestId !== requestIdRef.current) {
+        return;
       }
-    },
-    [],
-  );
+      setSummary(data);
+      setError(null);
+    } catch (err) {
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+      const message =
+        err instanceof Error ? err.message : "Failed to load summary.";
+      setError(message);
+    } finally {
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     void loadSummary(false);
@@ -232,7 +221,7 @@ const TotalsSection: FC = () => {
               <div className="table">
                 <div className="table-header">
                   <span>Query Type</span>
-                  <span>Total Users</span>
+                  <span>Total Queries</span>
                 </div>
                 {totalByTypeRows.map((row) => (
                   <div key={row.key} className="table-row">
