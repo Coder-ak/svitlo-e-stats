@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import "./App.less";
 import AppHeader from "./components/AppHeader";
 import TotalsSection from "./components/TotalsSection";
@@ -14,8 +14,11 @@ function App() {
   const [latestSampleLabel, setLatestSampleLabel] = useState("--");
   const [cacheSize, setCacheSize] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  useEffect(() => {
     localStorage.setItem("theme", theme);
   }, [theme]);
 

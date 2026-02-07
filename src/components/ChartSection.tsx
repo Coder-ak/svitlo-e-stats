@@ -431,7 +431,8 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         Math.round(selectedOption.seconds * 0.01),
       );
       const effectiveRawRangeSec =
-        Math.abs(rawRangeSec - selectedOption.seconds) <= stickyRangeToleranceSec
+        Math.abs(rawRangeSec - selectedOption.seconds) <=
+        stickyRangeToleranceSec
           ? selectedOption.seconds
           : rawRangeSec;
 
@@ -475,7 +476,14 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         setEndTime(nextEndTime);
       }, 250);
     },
-    [endTime, minRangeSec, rangeOptions, rangeSec, selectedOption, zoomLimitSec],
+    [
+      endTime,
+      minRangeSec,
+      rangeOptions,
+      rangeSec,
+      selectedOption,
+      zoomLimitSec,
+    ],
   );
 
   const latestSample = chartData?.bins?.length
@@ -528,8 +536,9 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
             })}
           </div>
           <div className="range-meta">
+            <span>Selected interval:</span>
             <span>{rangeStartLabel}</span>
-            <span>to</span>
+            <span>–</span>
             <span>{rangeEndLabel}</span>
           </div>
         </div>

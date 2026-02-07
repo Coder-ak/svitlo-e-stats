@@ -275,12 +275,10 @@ const AccessChart = ({
         right: -16,
         top: 20,
         iconStyle: {
-          borderWidth: 1,
           borderColor: muted,
         },
         emphasis: {
           iconStyle: {
-            borderWidth: 1,
             borderColor: TYPE_COLORS.cl,
             color: `${TYPE_COLORS.cl}22`,
           },
