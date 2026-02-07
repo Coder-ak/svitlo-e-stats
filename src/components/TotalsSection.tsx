@@ -149,10 +149,12 @@ const TotalsSection: FC = () => {
               </div>
             ) : (
               <>
-                <div className="meta-value meta-value-strong">
-                  {summary?.totalHits?.toLocaleString("en-GB") ?? "--"}
+                <div className="meta-value-row">
+                  <div className="meta-value meta-value-strong">
+                    {summary?.totalHits?.toLocaleString("en-GB") ?? "--"}
+                  </div>
+                  <div className="meta-sub">hits</div>
                 </div>
-                <div className="meta-sub">all access hits</div>
                 <ul className="kv-list">
                   <li className="kv-item">
                     <span className="kv-label">Total days</span>
