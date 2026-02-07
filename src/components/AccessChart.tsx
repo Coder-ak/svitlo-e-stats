@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
+import { TYPE_LABELS } from "../const/typeLabels";
 import { normalizeZoomRange, toEpochMs } from "../utils/time";
 
 type AccessChartProps = {
-  seriesData: [number, number][];
+  seriesData: Record<string, [number, number][]>;
+  types: string[];
   rangeStart: number;
   endTime: number;
   axisMin?: number;
@@ -15,8 +17,18 @@ type AccessChartProps = {
   onZoomRange: (startMs: number, endMs: number) => void;
 };
 
+const TYPE_COLORS: Record<string, string> = {
+  na: "#8b5cf6",
+  cl: "#3b82f6",
+  cs: "#06b6d4",
+  ql: "#10b981",
+  qs: "#f59e0b",
+  qi: "#ef4444",
+};
+
 const AccessChart = ({
   seriesData,
+  types,
   rangeStart,
   endTime,
   axisMin,
@@ -29,6 +41,7 @@ const AccessChart = ({
 }: AccessChartProps) => {
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chartInstanceRef = useRef<echarts.ECharts | null>(null);
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!chartRef.current) {
@@ -59,10 +72,37 @@ const AccessChart = ({
     const text = rootStyles.getPropertyValue("--text").trim();
     const muted = rootStyles.getPropertyValue("--muted").trim();
     const border = rootStyles.getPropertyValue("--border").trim();
-    const accent = rootStyles.getPropertyValue("--accent").trim();
-    const accentSoft = rootStyles.getPropertyValue("--accent-soft").trim();
     const bgAlt = rootStyles.getPropertyValue("--bg-alt").trim();
     const gridLine = rootStyles.getPropertyValue("--grid-line").trim();
+
+    const series = types.map((accessType) => {
+      const color = TYPE_COLORS[accessType] || "#6b7280";
+      const data = seriesData[accessType] || [];
+
+      return {
+        name: accessType.toUpperCase(),
+        type: "line" as const,
+        stack: "total",
+        data: data,
+        showSymbol: false,
+        lineStyle: { width: 0 },
+        areaStyle: {
+          color: color,
+          opacity: hiddenTypes.has(accessType) ? 0 : 0.7,
+        },
+        itemStyle: { color: color },
+        emphasis: {
+          focus: "series" as const,
+        },
+      };
+    });
+
+    type TooltipItem = {
+      value: unknown;
+      marker?: string;
+      seriesName?: string;
+      axisValue?: string | number;
+    };
 
     const option: echarts.EChartsOption = {
       animation: false,
@@ -71,11 +111,32 @@ const AccessChart = ({
         fontFamily: "IBM Plex Mono, Menlo, monospace",
       },
       grid: {
-        left: 48,
-        right: 24,
-        top: 32,
+        left: 26,
+        right: 26,
+        top: 40,
         bottom: 48,
         containLabel: true,
+      },
+      legend: {
+        top: 8,
+        right: 24,
+        textStyle: {
+          color: text,
+          fontFamily: "IBM Plex Mono, Menlo, monospace",
+          fontSize: 11,
+        },
+        itemWidth: 12,
+        itemHeight: 12,
+        selected: Object.fromEntries(
+          types.map((type) => [type.toUpperCase(), !hiddenTypes.has(type)]),
+        ),
+        tooltip: {
+          show: true,
+          formatter: (params) => {
+            const { name } = params;
+            return TYPE_LABELS[name?.toLowerCase()] || "";
+          },
+        },
       },
       tooltip: {
         trigger: "axis",
@@ -85,14 +146,40 @@ const AccessChart = ({
         textStyle: {
           color: text,
           fontFamily: "IBM Plex Mono, Menlo, monospace",
+          fontSize: 11,
         },
-        formatter: (params) => {
-          const point = Array.isArray(params) ? params[0] : params;
-          const value = Array.isArray(point.value) ? point.value[1] : point.value;
-          const axisValue = (point as { axisValue?: number | string }).axisValue;
-          const timeValue = Array.isArray(point.value) ? point.value[0] : axisValue;
-          const formattedTime = dateTimeFormat.format(new Date(Number(timeValue)));
-          return `${formattedTime}<br/>${value} hits`;
+        formatter: (params: unknown) => {
+          const items = (Array.isArray(params) ? params : [params]).filter(
+            (item) => item != null,
+          ) as TooltipItem[];
+          if (items.length === 0) return "";
+
+          const first = items[0];
+          const rawAxisValue = first.axisValue ?? first.value;
+          const timeMs = toEpochMs(rawAxisValue);
+          const formattedTime =
+            timeMs != null ? dateTimeFormat.format(new Date(timeMs)) : "";
+
+          let total = 0;
+          const lines = items.reduce<string[]>((acc, item) => {
+            const value = Array.isArray(item.value)
+              ? item.value[1]
+              : item.value;
+            if (
+              typeof value !== "number" ||
+              !Number.isFinite(value) ||
+              value <= 0
+            ) {
+              return acc;
+            }
+            total += value;
+            acc.push(`${item.marker ?? ""} ${item.seriesName ?? ""}: ${value}`);
+            return acc;
+          }, []);
+
+          return `<div style="font-weight: 600; margin-bottom: 4px;">${formattedTime}</div>
+                  <div style="color: ${muted}; margin-bottom: 4px;">Total: ${total}</div>
+                  ${lines.join("<br/>")}`;
         },
       },
       xAxis: {
@@ -103,6 +190,7 @@ const AccessChart = ({
         axisTick: { lineStyle: { color: border } },
         axisLabel: {
           color: muted,
+          fontSize: 11,
           formatter: (value: number) => dateTimeFormat.format(new Date(value)),
         },
         splitLine: {
@@ -113,8 +201,26 @@ const AccessChart = ({
       yAxis: {
         type: "value",
         axisLine: { lineStyle: { color: border } },
-        axisLabel: { color: muted },
+        axisLabel: {
+          color: muted,
+          fontSize: 11,
+        },
         splitLine: { lineStyle: { color: gridLine } },
+      },
+      toolbox: {
+        show: true,
+        orient: "vertical",
+        right: -16,
+        top: 20,
+        feature: {
+          dataZoom: {
+            yAxisIndex: "none",
+          },
+          magicType: {
+            type: ["line", "bar"],
+          },
+          saveAsImage: {},
+        },
       },
       dataZoom: [
         {
@@ -123,8 +229,9 @@ const AccessChart = ({
           endValue: endTime,
           minValueSpan: minRangeMs,
           maxValueSpan: maxRangeMs,
-          zoomOnMouseWheel: true,
+          zoomOnMouseWheel: false,
           moveOnMouseMove: true,
+          moveOnMouseWheel: false,
         },
         {
           type: "slider",
@@ -136,24 +243,38 @@ const AccessChart = ({
           bottom: 12,
           borderColor: border,
           backgroundColor: bgAlt,
-          fillerColor: accentSoft,
-          handleStyle: { color: accent },
-          textStyle: { color: muted },
+          fillerColor: TYPE_COLORS.cl + "40",
+          handleStyle: { color: TYPE_COLORS.cl },
+          textStyle: { color: muted, fontSize: 10 },
         },
       ],
-      series: [
-        {
-          type: "line",
-          data: seriesData,
-          showSymbol: false,
-          lineStyle: { width: 2, color: accent },
-          itemStyle: { color: accent },
-          areaStyle: { color: accentSoft },
-        },
-      ],
+      series: series,
     };
 
     instance.setOption(option, true);
+
+    const handleLegendSelectChanged = (params: unknown) => {
+      if (!params || typeof params !== "object") {
+        return;
+      }
+      const selection = params as { selected?: Record<string, boolean> };
+      if (!selection.selected) {
+        return;
+      }
+      const newHidden = new Set<string>();
+      types.forEach((type) => {
+        if (!selection.selected?.[type.toUpperCase()]) {
+          newHidden.add(type);
+        }
+      });
+      setHiddenTypes(newHidden);
+    };
+
+    instance.on("legendselectchanged", handleLegendSelectChanged);
+
+    return () => {
+      instance.off("legendselectchanged", handleLegendSelectChanged);
+    };
   }, [
     axisMax,
     axisMin,
@@ -164,6 +285,8 @@ const AccessChart = ({
     rangeStart,
     seriesData,
     theme,
+    types,
+    hiddenTypes,
   ]);
 
   useEffect(() => {
@@ -199,7 +322,12 @@ const AccessChart = ({
           ) {
             return axisMin + ((axisMax - axisMin) * value) / 100;
           }
-          if (axisMin == null && axisMax == null && value >= 0 && value <= 100) {
+          if (
+            axisMin == null &&
+            axisMax == null &&
+            value >= 0 &&
+            value <= 100
+          ) {
             return undefined;
           }
         }

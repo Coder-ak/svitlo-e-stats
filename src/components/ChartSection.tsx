@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AccessChart from "./AccessChart";
 import type { AccessStatsResponse, RangeOption } from "../types";
-import { parseMetaTime } from "../utils/time";
+import { parseMetaTime, getOptimalBinSec } from "../utils/time";
 
 type ChartSectionProps = {
   theme: "light" | "dark";
@@ -16,44 +16,46 @@ type CacheItem = {
   loadedAt: number;
 };
 
-const DEFAULT_RANGE_SEC = 7 * 24 * 60 * 60;
 const MIN_RANGE_SEC = 60;
+const MAX_CACHE_SIZE = 20;
+
 const RANGE_OPTIONS: RangeOption[] = [
-  { id: "1h", label: "1H", seconds: 60 * 60 },
-  { id: "1d", label: "1D", seconds: 24 * 60 * 60 },
-  { id: "7d", label: "7D", seconds: DEFAULT_RANGE_SEC },
-  { id: "30d", label: "30D", seconds: 30 * 24 * 60 * 60 },
+  { id: "1h", label: "1H", seconds: 60 * 60, binSec: 60 },
+  { id: "1d", label: "1D", seconds: 24 * 60 * 60, binSec: 5 * 60 },
+  { id: "7d", label: "7D", seconds: 7 * 24 * 60 * 60, binSec: 5 * 60 },
+  { id: "30d", label: "30D", seconds: 30 * 24 * 60 * 60, binSec: 15 * 60 },
 ];
 
-const BIN_SEC: number | null = null;
+const DEFAULT_OPTION = RANGE_OPTIONS.find((opt) => opt.id === "7d")!;
 const API_ENDPOINT = `${import.meta.env.VITE_API_PATH}/access`;
 
 function makeCacheKey(
   endTimeEpochMs: number,
   rangeSec: number,
-  binSec: number | null,
+  binSec: number,
 ) {
-  const binLabel = binSec ?? "default";
-  return `${Math.round(endTimeEpochMs)}:${Math.round(rangeSec)}:${binLabel}`;
+  return `${Math.round(endTimeEpochMs)}:${Math.round(rangeSec)}:${binSec}`;
 }
 
 const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
-  const [selectedRangeSec, setSelectedRangeSec] = useState(DEFAULT_RANGE_SEC);
-  const [rangeSec, setRangeSec] = useState(DEFAULT_RANGE_SEC);
+  const [selectedOption, setSelectedOption] = useState(DEFAULT_OPTION);
   const [endTime, setEndTime] = useState(() => Date.now());
   const [chartData, setChartData] = useState<AccessStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cacheVersion, setCacheVersion] = useState(0);
   const [availableRange, setAvailableRange] = useState<{
     min?: number;
     max?: number;
   }>({});
+  const [cachedData, setCachedData] = useState<Map<string, CacheItem>>(
+    new Map(),
+  );
 
   const cacheRef = useRef(new Map<string, CacheItem>());
   const inFlightRef = useRef(new Map<string, Promise<AccessStatsResponse>>());
   const requestIdRef = useRef(0);
   const zoomDebounceRef = useRef<number | null>(null);
+  const isInitialLoadRef = useRef(true);
 
   const dateTimeFormat = useMemo(
     () =>
@@ -65,37 +67,6 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       }),
     [],
   );
-
-  const rangeStart = endTime - rangeSec * 1000;
-  const minRangeMs = MIN_RANGE_SEC * 1000;
-  const maxRangeMs = Math.max(minRangeMs, selectedRangeSec * 1000);
-  const axisMin = availableRange.min ?? chartData?.bins?.[0];
-  const latestBin = chartData?.bins?.length
-    ? chartData.bins[chartData.bins.length - 1]
-    : undefined;
-  const axisMax = availableRange.max ?? latestBin;
-
-  const seriesData = useMemo(() => {
-    const merged = new Map<number, number>();
-    for (const cached of cacheRef.current.values()) {
-      cached.data.bins.forEach((bin, index) => {
-        merged.set(bin, cached.data.total?.[index] ?? 0);
-      });
-    }
-    return Array.from(merged.entries())
-      .sort((a, b) => a[0] - b[0])
-      .map(([bin, value]) => [bin, value] as [number, number]);
-  }, []);
-
-  const windowSeriesData = useMemo(() => {
-    if (!chartData?.bins?.length) {
-      return [] as [number, number][];
-    }
-    return chartData.bins.map((bin, index) => [
-      bin,
-      chartData.total?.[index] ?? 0,
-    ]);
-  }, [chartData]);
 
   const allRangeSec = useMemo(() => {
     if (availableRange.min == null || availableRange.max == null) {
@@ -113,13 +84,136 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     }
     return [
       ...RANGE_OPTIONS,
-      { id: "all", label: "ALL", seconds: allRangeSec },
+      {
+        id: "all",
+        label: "ALL",
+        seconds: allRangeSec,
+        binSec: getOptimalBinSec(allRangeSec),
+      },
     ];
   }, [allRangeSec]);
 
+  const rangeSec = selectedOption.seconds;
+  const binSec = selectedOption.binSec;
+  const rangeStart = endTime - rangeSec * 1000;
+  const minRangeMs = MIN_RANGE_SEC * 1000;
+  const maxRangeMs = rangeSec * 1000;
+
+  const axisMin = availableRange.min;
+  const latestBin = chartData?.bins?.length
+    ? chartData.bins[chartData.bins.length - 1]
+    : undefined;
+  const axisMax = availableRange.max ?? latestBin;
+
+  const seriesData = useMemo(() => {
+    const dataByType: Record<string, Map<number, number>> = {};
+
+    const allTypes = new Set<string>();
+    for (const cached of cachedData.values()) {
+      if (cached.data.meta?.types) {
+        cached.data.meta.types.forEach((type) => allTypes.add(type));
+      }
+    }
+
+    allTypes.forEach((type) => {
+      dataByType[type] = new Map();
+    });
+
+    for (const cached of cachedData.values()) {
+      const { bins, countsByType } = cached.data;
+
+      Object.entries(countsByType).forEach(([type, values]) => {
+        if (!dataByType[type]) {
+          dataByType[type] = new Map();
+        }
+
+        bins.forEach((bin, index) => {
+          const value = values[index] ?? 0;
+          const existing = dataByType[type].get(bin) ?? 0;
+          dataByType[type].set(bin, existing + value);
+        });
+      });
+    }
+
+    const result: Record<string, [number, number][]> = {};
+
+    Object.entries(dataByType).forEach(([type, map]) => {
+      result[type] = Array.from(map.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([bin, value]) => [bin, value]);
+    });
+
+    return result;
+  }, [cachedData]);
+
+  // Filter series data to visible range for better Y-axis scaling
+  const visibleSeriesData = useMemo(() => {
+    const filtered: Record<string, [number, number][]> = {};
+
+    Object.entries(seriesData).forEach(([type, data]) => {
+      filtered[type] = data.filter(
+        ([bin]) => bin >= rangeStart && bin <= endTime,
+      );
+    });
+
+    return filtered;
+  }, [seriesData, rangeStart, endTime]);
+
+  const types = useMemo(() => {
+    const allTypes = new Set<string>();
+
+    if (chartData?.meta?.types) {
+      chartData.meta.types.forEach((type) => allTypes.add(type));
+    }
+
+    for (const cached of cachedData.values()) {
+      if (cached.data.meta?.types) {
+        cached.data.meta.types.forEach((type) => allTypes.add(type));
+      }
+    }
+
+    const typeOrder = ["cl", "cs", "ql", "qs", "qi", "na"];
+    return Array.from(allTypes).sort((a, b) => {
+      const indexA = typeOrder.indexOf(a);
+      const indexB = typeOrder.indexOf(b);
+      if (indexA === -1) return 1;
+      if (indexB === -1) return -1;
+      return indexA - indexB;
+    });
+  }, [chartData, cachedData]);
+
+  const evictOldestCache = useCallback(() => {
+    if (cacheRef.current.size <= MAX_CACHE_SIZE) {
+      return;
+    }
+
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+
+    cacheRef.current.forEach((item, key) => {
+      if (item.loadedAt < oldestTime) {
+        oldestTime = item.loadedAt;
+        oldestKey = key;
+      }
+    });
+
+    if (oldestKey) {
+      cacheRef.current.delete(oldestKey);
+      setCachedData(new Map(cacheRef.current));
+    }
+  }, []);
+
   const fetchStats = useCallback(
-    async (targetEndTime: number, targetRangeSec: number) => {
-      const cacheKey = makeCacheKey(targetEndTime, targetRangeSec, BIN_SEC);
+    async (
+      targetEndTime: number,
+      targetRangeSec: number,
+      targetBinSec: number,
+    ) => {
+      const cacheKey = makeCacheKey(
+        targetEndTime,
+        targetRangeSec,
+        targetBinSec,
+      );
       const cached = cacheRef.current.get(cacheKey);
       if (cached) {
         return cached.data;
@@ -131,41 +225,38 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       }
 
       const url = new URL(API_ENDPOINT, window.location.origin);
-      url.searchParams.set("endTimeEpochMs", `${Math.round(targetEndTime)}`);
+      url.searchParams.set("endTime", `${Math.round(targetEndTime)}`);
       url.searchParams.set("rangeSec", `${Math.round(targetRangeSec)}`);
-      if (BIN_SEC && BIN_SEC > 0) {
-        url.searchParams.set("binSec", `${BIN_SEC}`);
-      }
+      url.searchParams.set("binInterval", `${targetBinSec}`);
 
       const request = fetch(url.toString()).then(async (response) => {
         if (!response.ok) {
           throw new Error(`Request failed: ${response.status}`);
         }
         const data = (await response.json()) as AccessStatsResponse;
-        if (!Array.isArray(data.bins) || !Array.isArray(data.total)) {
+        if (!Array.isArray(data.bins)) {
           throw new Error("Unexpected response shape.");
         }
-        const normalizedCountsByType = data.countsByType
-          ? Object.fromEntries(
-              Object.entries(data.countsByType).map(([key, values]) => [
-                key,
-                Array.isArray(values)
-                  ? values.map((value) => Number(value))
-                  : [],
-              ]),
-            )
-          : undefined;
+
         const normalized: AccessStatsResponse = {
           ...data,
           bins: data.bins.map((value) => Number(value)),
           total: data.total.map((value) => Number(value)),
-          countsByType: normalizedCountsByType,
+          countsByType: Object.fromEntries(
+            Object.entries(data.countsByType).map(([key, values]) => [
+              key,
+              values.map((value) => Number(value)),
+            ]),
+          ),
         };
+
         cacheRef.current.set(cacheKey, {
           data: normalized,
           loadedAt: Date.now(),
         });
-        setCacheVersion((value) => value + 1);
+
+        evictOldestCache();
+        setCachedData(new Map(cacheRef.current));
         return normalized;
       });
 
@@ -176,24 +267,24 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         inFlightRef.current.delete(cacheKey);
       }
     },
-    [],
+    [evictOldestCache],
   );
 
   const prefetchAdjacent = useCallback(
     async (
       targetEndTime: number,
       targetRangeSec: number,
+      targetBinSec: number,
       data: AccessStatsResponse | null,
     ) => {
-      if (!targetRangeSec) {
-        return;
-      }
       const rangeMs = targetRangeSec * 1000;
       const currentStart = targetEndTime - rangeMs;
+
       const availableMin =
         parseMetaTime(data?.meta?.availableMin) ?? availableRange.min;
       const availableMax =
         parseMetaTime(data?.meta?.availableMax) ?? availableRange.max;
+
       const prevEnd = currentStart;
       const nextEnd = targetEndTime + rangeMs;
 
@@ -202,19 +293,31 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       const canPrefetchNext = availableMax == null || nextEnd <= availableMax;
 
       if (canPrefetchPrev) {
-        fetchStats(prevEnd, targetRangeSec).catch(() => undefined);
+        fetchStats(prevEnd, targetRangeSec, targetBinSec).catch(
+          () => undefined,
+        );
       }
       if (canPrefetchNext) {
-        fetchStats(nextEnd, targetRangeSec).catch(() => undefined);
+        fetchStats(nextEnd, targetRangeSec, targetBinSec).catch(
+          () => undefined,
+        );
       }
     },
     [availableRange, fetchStats],
   );
 
   const loadRange = useCallback(
-    async (targetEndTime: number, targetRangeSec: number) => {
+    async (
+      targetEndTime: number,
+      targetRangeSec: number,
+      targetBinSec: number,
+    ) => {
       const requestId = ++requestIdRef.current;
-      const cacheKey = makeCacheKey(targetEndTime, targetRangeSec, BIN_SEC);
+      const cacheKey = makeCacheKey(
+        targetEndTime,
+        targetRangeSec,
+        targetBinSec,
+      );
       const cached = cacheRef.current.get(cacheKey);
 
       if (cached) {
@@ -225,12 +328,15 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       setLoading(!cached);
       try {
         const data =
-          cached?.data ?? (await fetchStats(targetEndTime, targetRangeSec));
+          cached?.data ??
+          (await fetchStats(targetEndTime, targetRangeSec, targetBinSec));
         if (requestId !== requestIdRef.current) {
           return;
         }
         setChartData(data);
         setError(null);
+        isInitialLoadRef.current = false;
+
         const metaMin = parseMetaTime(data.meta?.availableMin);
         const metaMax = parseMetaTime(data.meta?.availableMax);
         if (Number.isFinite(metaMin) && Number.isFinite(metaMax)) {
@@ -241,7 +347,13 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
             return { min: metaMin as number, max: metaMax as number };
           });
         }
-        void prefetchAdjacent(targetEndTime, targetRangeSec, data);
+
+        void prefetchAdjacent(
+          targetEndTime,
+          targetRangeSec,
+          targetBinSec,
+          data,
+        );
       } catch (err) {
         if (requestId !== requestIdRef.current) {
           return;
@@ -259,8 +371,8 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   );
 
   useEffect(() => {
-    loadRange(endTime, rangeSec);
-  }, [endTime, rangeSec, loadRange]);
+    loadRange(endTime, rangeSec, binSec);
+  }, [endTime, rangeSec, binSec, loadRange]);
 
   useEffect(() => {
     return () => {
@@ -275,27 +387,36 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       option.id === "all" && availableRange.max
         ? availableRange.max
         : Date.now();
-    setSelectedRangeSec(option.seconds);
-    setRangeSec(option.seconds);
+    setSelectedOption(option);
     setEndTime(targetEnd);
+    isInitialLoadRef.current = false;
   };
 
   const handleZoomRange = useCallback(
     (startMs: number, endMs: number) => {
-      const rawRangeSec = Math.round((endMs - startMs) / 1000);
-      const boundedRangeSec = Math.min(
-        Math.max(rawRangeSec, MIN_RANGE_SEC),
-        selectedRangeSec,
+      if (isInitialLoadRef.current) {
+        return;
+      }
+
+      const actualStart = Math.min(startMs, endMs);
+      const actualEnd = Math.max(startMs, endMs);
+
+      const rawRangeSec = Math.round((actualEnd - actualStart) / 1000);
+
+      const boundedRangeSec = Math.max(
+        Math.min(rawRangeSec, selectedOption.seconds),
+        MIN_RANGE_SEC,
       );
-      const nextRangeSec =
-        rawRangeSec < MIN_RANGE_SEC
-          ? Math.min(rangeSec, selectedRangeSec)
-          : boundedRangeSec;
-      const nextEndTime = Math.round(startMs + nextRangeSec * 1000);
+
+      const rangeDiff = rawRangeSec - boundedRangeSec;
+      const nextEndTime =
+        rangeDiff !== 0
+          ? Math.round(actualStart + boundedRangeSec * 1000)
+          : Math.round(actualEnd);
 
       if (
         Math.abs(nextEndTime - endTime) < 1000 &&
-        Math.abs(nextRangeSec - rangeSec) < 1
+        Math.abs(boundedRangeSec - rangeSec) < 1
       ) {
         return;
       }
@@ -305,11 +426,19 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       }
 
       zoomDebounceRef.current = window.setTimeout(() => {
-        setRangeSec(nextRangeSec);
+        // If user zoomed to a different range, update selectedOption to match
+        if (Math.abs(boundedRangeSec - selectedOption.seconds) > 1) {
+          setSelectedOption({
+            id: "custom",
+            label: "Custom",
+            seconds: boundedRangeSec,
+            binSec: selectedOption.binSec,
+          });
+        }
         setEndTime(nextEndTime);
       }, 250);
     },
-    [endTime, rangeSec, selectedRangeSec],
+    [endTime, rangeSec, selectedOption],
   );
 
   const latestSample = chartData?.bins?.length
@@ -329,7 +458,11 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       latestSampleLabel,
       cacheSize: cacheRef.current.size,
     });
-  }, [cacheVersion, latestSampleLabel, onMetaChange]);
+  }, [cachedData, latestSampleLabel, onMetaChange]);
+
+  const hasData = Object.values(visibleSeriesData).some(
+    (data) => data.length > 0,
+  );
 
   return (
     <section className="section fade-in delay-1">
@@ -337,17 +470,14 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         <div>
           <h2 className="section-title">Access activity</h2>
           <p className="section-subtitle">
-            Pan or zoom to request more data. Previously loaded ranges pop in
-            immediately.
+            Stacked area chart showing all access types. Click legend to toggle
+            types. Pan or zoom to explore data.
           </p>
         </div>
         <div className="panel-actions">
           <div className="range-buttons">
             {rangeOptions.map((option) => {
-              const isActive =
-                option.id === "all" && allRangeSec
-                  ? Math.abs(selectedRangeSec - allRangeSec) < 2
-                  : selectedRangeSec === option.seconds;
+              const isActive = selectedOption.id === option.id;
               return (
                 <button
                   key={option.id}
@@ -369,7 +499,8 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       </div>
       <div className="chart-shell">
         <AccessChart
-          seriesData={seriesData}
+          seriesData={visibleSeriesData}
+          types={types}
           rangeStart={rangeStart}
           endTime={endTime}
           axisMin={axisMin}
@@ -386,7 +517,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
           </div>
         )}
         {!loading && error && <div className="chart-overlay">{error}</div>}
-        {!loading && !error && windowSeriesData.length === 0 && (
+        {!loading && !error && !hasData && (
           <div className="chart-overlay">No data yet</div>
         )}
       </div>
