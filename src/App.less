@@ -28,10 +28,36 @@
 }
 
 .logo {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
   font-size: 0.95rem;
   text-transform: uppercase;
   letter-spacing: 0.18em;
   font-weight: 700;
+}
+
+.logo-mark {
+  width: 18px;
+  height: 18px;
+  display: block;
+  background-color: var(--text);
+  mask: url("./assets/logo.svg") center / contain no-repeat;
+  -webkit-mask: url("./assets/logo.svg") center / contain no-repeat;
+}
+
+.logo:hover .logo-mark {
+  animation: logo-mark-blink 0.8s ease-in-out infinite;
+}
+
+@keyframes logo-mark-blink {
+  0%,
+  100% {
+    background-color: var(--text);
+  }
+  50% {
+    background-color: var(--accent);
+  }
 }
 
 .header-actions {
@@ -72,8 +98,8 @@
 }
 
 .icon-link {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--border);
   background: var(--ghost);
   display: inline-flex;
@@ -237,6 +263,9 @@
   border: 1px solid var(--border);
   background: var(--card-bg);
   padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .totals-card-loading {
@@ -262,6 +291,21 @@
   margin-top: 6px;
   font-family: var(--font-mono);
   font-size: 1.2rem;
+}
+
+.meta-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.meta-value-row .meta-value {
+  margin-top: 0;
+}
+
+.meta-value-row .meta-sub {
+  margin-top: 0;
 }
 
 .meta-sub {
@@ -387,7 +431,7 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .kv-item {
@@ -433,7 +477,11 @@
   grid-template-columns: 1.4fr 0.8fr;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px dashed var(--border);
+
+  span:last-child {
+    text-align: right;
+    margin-right: 38px;
+  }
 }
 
 .table-row:last-child {
