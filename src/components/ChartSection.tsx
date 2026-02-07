@@ -17,6 +17,8 @@ type CacheItem = {
 };
 
 const MIN_RANGE_SEC = 60;
+const MIN_RANGE_RATIO = 1 / 7;
+const AXIS_WINDOW_MULTIPLIER = 7;
 const MAX_CACHE_SIZE = 20;
 
 const RANGE_OPTIONS: RangeOption[] = [
@@ -39,6 +41,7 @@ function makeCacheKey(
 
 const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   const [selectedOption, setSelectedOption] = useState(DEFAULT_OPTION);
+  const [zoomLimitSec, setZoomLimitSec] = useState(DEFAULT_OPTION.seconds);
   const [endTime, setEndTime] = useState(() => Date.now());
   const [chartData, setChartData] = useState<AccessStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,14 +99,34 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   const rangeSec = selectedOption.seconds;
   const binSec = selectedOption.binSec;
   const rangeStart = endTime - rangeSec * 1000;
-  const minRangeMs = MIN_RANGE_SEC * 1000;
-  const maxRangeMs = rangeSec * 1000;
+  const xAxisLabelMode =
+    selectedOption.id === "all"
+      ? "date"
+      : rangeSec <= 60 * 60
+        ? "time"
+        : "datetime";
+  const minRangeSec = Math.min(
+    zoomLimitSec,
+    Math.max(MIN_RANGE_SEC, Math.round(zoomLimitSec * MIN_RANGE_RATIO)),
+  );
+  const minRangeMs = minRangeSec * 1000;
+  const maxRangeMs = zoomLimitSec * 1000;
 
-  const axisMin = availableRange.min;
   const latestBin = chartData?.bins?.length
     ? chartData.bins[chartData.bins.length - 1]
     : undefined;
-  const axisMax = availableRange.max ?? latestBin;
+  const axisWindowMs = zoomLimitSec * AXIS_WINDOW_MULTIPLIER * 1000;
+  const axisRightPaddingMs = zoomLimitSec * 1000;
+  const targetAxisMax = endTime + axisRightPaddingMs;
+  const boundedAxisMax = Math.min(
+    targetAxisMax,
+    availableRange.max ?? latestBin ?? targetAxisMax,
+  );
+  const axisMin = Math.max(
+    availableRange.min ?? boundedAxisMax - axisWindowMs,
+    boundedAxisMax - axisWindowMs,
+  );
+  const axisMax = boundedAxisMax;
 
   const seriesData = useMemo(() => {
     const dataByType: Record<string, Map<number, number>> = {};
@@ -388,6 +411,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         ? availableRange.max
         : Date.now();
     setSelectedOption(option);
+    setZoomLimitSec(option.seconds);
     setEndTime(targetEnd);
     isInitialLoadRef.current = false;
   };
@@ -402,13 +426,21 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       const actualEnd = Math.max(startMs, endMs);
 
       const rawRangeSec = Math.round((actualEnd - actualStart) / 1000);
+      const stickyRangeToleranceSec = Math.max(
+        2,
+        Math.round(selectedOption.seconds * 0.01),
+      );
+      const effectiveRawRangeSec =
+        Math.abs(rawRangeSec - selectedOption.seconds) <= stickyRangeToleranceSec
+          ? selectedOption.seconds
+          : rawRangeSec;
 
       const boundedRangeSec = Math.max(
-        Math.min(rawRangeSec, selectedOption.seconds),
-        MIN_RANGE_SEC,
+        Math.min(effectiveRawRangeSec, zoomLimitSec),
+        minRangeSec,
       );
 
-      const rangeDiff = rawRangeSec - boundedRangeSec;
+      const rangeDiff = effectiveRawRangeSec - boundedRangeSec;
       const nextEndTime =
         rangeDiff !== 0
           ? Math.round(actualStart + boundedRangeSec * 1000)
@@ -426,8 +458,13 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       }
 
       zoomDebounceRef.current = window.setTimeout(() => {
-        // If user zoomed to a different range, update selectedOption to match
-        if (Math.abs(boundedRangeSec - selectedOption.seconds) > 1) {
+        const matchedOption = rangeOptions.find(
+          (option) => Math.abs(option.seconds - boundedRangeSec) <= 1,
+        );
+        if (matchedOption) {
+          setSelectedOption(matchedOption);
+          setZoomLimitSec(matchedOption.seconds);
+        } else if (Math.abs(boundedRangeSec - selectedOption.seconds) > 1) {
           setSelectedOption({
             id: "custom",
             label: "Custom",
@@ -438,7 +475,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         setEndTime(nextEndTime);
       }, 250);
     },
-    [endTime, rangeSec, selectedOption],
+    [endTime, minRangeSec, rangeOptions, rangeSec, selectedOption, zoomLimitSec],
   );
 
   const latestSample = chartData?.bins?.length
@@ -503,6 +540,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
           types={types}
           rangeStart={rangeStart}
           endTime={endTime}
+          xAxisLabelMode={xAxisLabelMode}
           axisMin={axisMin}
           axisMax={axisMax}
           minRangeMs={minRangeMs}
