@@ -5,9 +5,9 @@ import type {
   LightStatusEvent,
   LightStatusInterval,
   RangeOption,
-  SummaryStatsResponse,
 } from "../types";
 import { parseMetaTime, getOptimalBinSec } from "../utils/time";
+import { useSummary } from "../context/useSummary";
 
 type ChartSectionProps = {
   theme: "light" | "dark";
@@ -42,7 +42,6 @@ const RANGE_OPTIONS: RangeOption[] = [
 
 const DEFAULT_OPTION = RANGE_OPTIONS.find((opt) => opt.id === "7d")!;
 const API_ENDPOINT = `${import.meta.env.VITE_API_PATH}/access`;
-const SUMMARY_ENDPOINT = `${import.meta.env.VITE_API_PATH}/total`;
 const LIGHT_STATUS_ENDPOINT = "/api/v1/light-bot";
 const LIGHT_STATUS_AREAS = [0, 1] as const;
 
@@ -54,10 +53,6 @@ function makeCacheKey(
   return `${Math.round(endTimeEpochMs)}:${Math.round(rangeSec)}:${binSec}`;
 }
 
-function buildSummaryUrl() {
-  return new URL(SUMMARY_ENDPOINT, window.location.origin).toString();
-}
-
 function buildLightStatusUrl(startTime: number, endTime: number) {
   const url = new URL(LIGHT_STATUS_ENDPOINT, window.location.origin);
   url.searchParams.set("startTime", `${Math.round(startTime)}`);
@@ -66,6 +61,7 @@ function buildLightStatusUrl(startTime: number, endTime: number) {
 }
 
 const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
+  const { summary, refreshSignal } = useSummary();
   const [selectedOption, setSelectedOption] = useState(DEFAULT_OPTION);
   const [zoomLimitSec, setZoomLimitSec] = useState(DEFAULT_OPTION.seconds);
   const [endTime, setEndTime] = useState(() => Date.now());
@@ -79,10 +75,6 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   const [cachedData, setCachedData] = useState<Map<string, CacheItem>>(
     new Map(),
   );
-  const [summaryRange, setSummaryRange] = useState<{
-    min?: number;
-    max?: number;
-  }>({});
   const [lightStatusEvents, setLightStatusEvents] = useState<LightStatusEvent[]>(
     [],
   );
@@ -106,50 +98,28 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       }),
     [],
   );
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    const loadSummaryRange = async () => {
-      try {
-        const response = await fetch(buildSummaryUrl());
-        if (!response.ok) {
-          return;
-        }
-        const data = (await response.json()) as SummaryStatsResponse;
-        if (isCancelled) {
-          return;
-        }
-        const min = parseMetaTime(data.availableMin);
-        const max = parseMetaTime(data.availableMax);
-        if (!Number.isFinite(min) || !Number.isFinite(max)) {
-          return;
-        }
-        setSummaryRange({
-          min: min as number,
-          max: max as number,
-        });
-      } catch {
-        // ignore summary range fetch errors and fallback to access metadata.
-      }
-    };
-
-    void loadSummaryRange();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+  const summaryMin = parseMetaTime(summary?.availableMin);
+  const summaryMax = parseMetaTime(summary?.availableMax);
+  const effectiveAvailableRange = useMemo(
+    () => ({
+      min: summaryMin ?? availableRange.min,
+      max: summaryMax ?? availableRange.max,
+    }),
+    [availableRange.max, availableRange.min, summaryMax, summaryMin],
+  );
 
   const allRangeSec = useMemo(() => {
-    if (availableRange.min == null || availableRange.max == null) {
+    if (
+      effectiveAvailableRange.min == null ||
+      effectiveAvailableRange.max == null
+    ) {
       return null;
     }
     const diffSec = Math.round(
-      (availableRange.max - availableRange.min) / 1000,
+      (effectiveAvailableRange.max - effectiveAvailableRange.min) / 1000,
     );
     return diffSec > 0 ? diffSec : null;
-  }, [availableRange]);
+  }, [effectiveAvailableRange.max, effectiveAvailableRange.min]);
 
   const rangeOptions = useMemo(() => {
     if (!allRangeSec) {
@@ -187,17 +157,17 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     : undefined;
   const axisWindowMs = zoomLimitSec * AXIS_WINDOW_MULTIPLIER * 1000;
   const fallbackAxisMax = latestBin ?? endTime;
-  const axisMax = availableRange.max ?? fallbackAxisMax;
+  const axisMax = effectiveAvailableRange.max ?? fallbackAxisMax;
   const axisMin =
-    availableRange.min ?? Math.max(0, axisMax - axisWindowMs);
+    effectiveAvailableRange.min ?? Math.max(0, axisMax - axisWindowMs);
   const lightStatusFetchRange = useMemo(() => {
-    const startMs = summaryRange.min ?? availableRange.min;
-    const endMs = summaryRange.max ?? availableRange.max;
+    const startMs = effectiveAvailableRange.min;
+    const endMs = effectiveAvailableRange.max;
     if (startMs == null || endMs == null || endMs <= startMs) {
       return null;
     }
     return { startMs, endMs };
-  }, [availableRange.max, availableRange.min, summaryRange.max, summaryRange.min]);
+  }, [effectiveAvailableRange.max, effectiveAvailableRange.min]);
 
   const seriesData = useMemo(() => {
     const dataByType: Record<string, Map<number, number>> = {};
@@ -421,9 +391,9 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       const currentStart = targetEndTime - rangeMs;
 
       const availableMin =
-        parseMetaTime(data?.meta?.availableMin) ?? availableRange.min;
+        parseMetaTime(data?.meta?.availableMin) ?? effectiveAvailableRange.min;
       const availableMax =
-        parseMetaTime(data?.meta?.availableMax) ?? availableRange.max;
+        parseMetaTime(data?.meta?.availableMax) ?? effectiveAvailableRange.max;
 
       const prevEnd = currentStart;
       const nextEnd = targetEndTime + rangeMs;
@@ -443,7 +413,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         );
       }
     },
-    [availableRange, fetchStats],
+    [effectiveAvailableRange.max, effectiveAvailableRange.min, fetchStats],
   );
 
   const loadRange = useCallback(
@@ -509,6 +479,19 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     },
     [fetchStats, prefetchAdjacent],
   );
+
+  useEffect(() => {
+    if (refreshSignal === 0) {
+      return;
+    }
+    cacheRef.current.clear();
+    inFlightRef.current.clear();
+    setCachedData(new Map());
+    setLightStatusLoadedKey(null);
+    setChartData(null);
+    isInitialLoadRef.current = false;
+    void loadRange(endTime, rangeSec, binSec);
+  }, [binSec, endTime, loadRange, rangeSec, refreshSignal]);
 
   useEffect(() => {
     loadRange(endTime, rangeSec, binSec);
@@ -587,8 +570,8 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
 
   const handleRangeClick = (option: RangeOption) => {
     const targetEnd =
-      option.id === "all" && availableRange.max
-        ? availableRange.max
+      option.id === "all" && effectiveAvailableRange.max
+        ? effectiveAvailableRange.max
         : Date.now();
     setSelectedOption(option);
     setZoomLimitSec(option.seconds);
@@ -740,13 +723,13 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
           onZoomRange={handleZoomRange}
         />
         {loading && (
-          <div className="chart-overlay">
+          <div className="overlay overlay-message">
             <div className="spinner" aria-label="Loading chart" />
           </div>
         )}
-        {!loading && error && <div className="chart-overlay">{error}</div>}
+        {!loading && error && <div className="overlay overlay-message">{error}</div>}
         {!loading && !error && !hasData && (
-          <div className="chart-overlay">No data yet</div>
+          <div className="overlay overlay-message">No data yet</div>
         )}
       </div>
     </section>
