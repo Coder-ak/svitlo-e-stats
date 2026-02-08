@@ -1,66 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FC } from "react";
-import type { SummaryStatsResponse } from "../types";
+import { useMemo } from "react";
+import type { FC, ReactNode } from "react";
 import { TYPE_LABELS } from "../const/typeLabels";
-
-const SUMMARY_ENDPOINT = `${import.meta.env.VITE_API_PATH}/total`;
-
-function buildSummaryUrl(refresh: boolean) {
-  const url = new URL(SUMMARY_ENDPOINT, window.location.origin);
-  if (refresh) {
-    url.searchParams.set("refresh", "true");
-  }
-  return url.toString();
-}
+import { useSummary } from "../context/useSummary";
 
 const TotalsSection: FC = () => {
-  const [summary, setSummary] = useState<SummaryStatsResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const requestIdRef = useRef(0);
-
-  const loadSummary = useCallback(async (refresh: boolean) => {
-    const requestId = ++requestIdRef.current;
-    if (refresh) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const response = await fetch(buildSummaryUrl(refresh));
-      if (!response.ok) {
-        throw new Error(`Request failed: ${response.status}`);
-      }
-      const data = (await response.json()) as SummaryStatsResponse;
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-      setSummary(data);
-      setError(null);
-    } catch (err) {
-      if (requestId !== requestIdRef.current) {
-        return;
-      }
-      const message =
-        err instanceof Error ? err.message : "Failed to load summary.";
-      setError(message);
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadSummary(false);
-
-    return () => {
-      requestIdRef.current += 1;
-    };
-  }, [loadSummary]);
-
-  const handleRefresh = useCallback(() => {
-    void loadSummary(true);
-  }, [loadSummary]);
+  const { summary, error, loading, refreshing, refresh } = useSummary();
+  const isInitialLoading = loading && !summary;
 
   const dateTimeCompact = useMemo(
     () =>
@@ -105,6 +50,20 @@ const TotalsSection: FC = () => {
   const generatedAtLabel = Number.isFinite(generatedAtValue)
     ? dateTimeCompact.format(new Date(generatedAtValue as number))
     : "--";
+  const renderCardBody = (content: ReactNode) => {
+    const isOverlayVisible = isInitialLoading || refreshing;
+
+    return (
+      <>
+        {!isInitialLoading ? content : null}
+        {isOverlayVisible ? (
+          <div className="overlay">
+            <div className="spinner spinner-small" aria-label="Loading" />
+          </div>
+        ) : null}
+      </>
+    );
+  };
 
   return (
     <section className="section totals-section fade-in">
@@ -119,10 +78,10 @@ const TotalsSection: FC = () => {
             <button
               type="button"
               className="totals-refresh"
-              onClick={handleRefresh}
-              disabled={loading}
+              onClick={() => void refresh()}
+              disabled={refreshing}
             >
-              {loading ? "Refreshing" : "Refresh"}
+              {refreshing ? "Refreshing" : "Refresh"}
             </button>
           </div>
         </div>
@@ -140,14 +99,7 @@ const TotalsSection: FC = () => {
           </div>
           <div className="meta-card">
             <div className="meta-label">Totals</div>
-            {loading ? (
-              <div className="totals-card-loading">
-                <div
-                  className="spinner spinner-small"
-                  aria-label="Loading totals"
-                />
-              </div>
-            ) : (
+            {renderCardBody(
               <>
                 <div className="meta-value-row">
                   <div className="meta-value meta-value-strong">
@@ -207,19 +159,12 @@ const TotalsSection: FC = () => {
                     </span>
                   </li>
                 </ul>
-              </>
+              </>,
             )}
           </div>
           <div className="meta-card">
             <div className="meta-label">By type</div>
-            {loading ? (
-              <div className="totals-card-loading">
-                <div
-                  className="spinner spinner-small"
-                  aria-label="Loading types"
-                />
-              </div>
-            ) : (
+            {renderCardBody(
               <div className="table">
                 <div className="table-header">
                   <span>Query Type</span>
@@ -237,7 +182,7 @@ const TotalsSection: FC = () => {
                     <span>--</span>
                   </div>
                 ) : null}
-              </div>
+              </div>,
             )}
           </div>
         </div>
