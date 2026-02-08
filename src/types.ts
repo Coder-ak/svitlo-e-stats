@@ -33,6 +33,19 @@ export type SummaryStatsResponse = {
   totalGroupHits: number;
 };
 
+export type LightStatusEvent = {
+  light: boolean;
+  timestamp: number;
+  area: number;
+};
+
+export type LightStatusInterval = {
+  light: boolean;
+  area: number;
+  startMs: number;
+  endMs: number;
+};
+
 export type CardItem = {
   id: string;
   title: string;

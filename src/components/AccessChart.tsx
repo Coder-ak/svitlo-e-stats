@@ -2,10 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import { TYPE_LABELS } from "../const/typeLabels";
 import { normalizeZoomRange, toEpochMs } from "../utils/time";
+import type { LightStatusInterval } from "../types";
+
+type LightStatusTrack = {
+  area: number;
+  label: string;
+  intervals: LightStatusInterval[];
+};
 
 type AccessChartProps = {
   seriesData: Record<string, [number, number][]>;
   types: string[];
+  lightStatusTracks: LightStatusTrack[];
   rangeStart: number;
   endTime: number;
   xAxisLabelMode: "time" | "datetime" | "date";
@@ -32,6 +40,7 @@ const LINE_CHART_ICON =
   "M4.1,28.9h7.1l9.3-22l7.4,38l9.7-19.7l3,12.8h14.9M4.1,58h51.4";
 const BAR_CHART_ICON =
   "M6.7,22.9h10V48h-10V22.9zM24.9,13h10v35h-10V13zM43.2,2h10v46h-10V2zM3.1,58h53.7";
+const DARK_THEME_BG = "#141312";
 
 function isResetZoomLabel(value: unknown) {
   return (
@@ -54,10 +63,27 @@ const xAxisDateFormat = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
   month: "short",
 });
+const DEFAULT_LIGHT_STATUS_TRACKS: LightStatusTrack[] = [
+  { area: 0, label: "R0", intervals: [] },
+  { area: 1, label: "R1", intervals: [] },
+];
+
+function formatDuration(durationMs: number) {
+  const totalMinutes = Math.max(1, Math.round(durationMs / (60 * 1000)));
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
 
 const AccessChart = ({
   seriesData,
   types,
+  lightStatusTracks,
   rangeStart,
   endTime,
   xAxisLabelMode,
@@ -110,8 +136,36 @@ const AccessChart = ({
     const border = rootStyles.getPropertyValue("--border").trim();
     const bgAlt = rootStyles.getPropertyValue("--bg-alt").trim();
     const gridLine = rootStyles.getPropertyValue("--grid-line").trim();
+    const lightStatusOffFill =
+      theme === "dark" ? "rgb(90, 0, 0)" : DARK_THEME_BG;
+    const lightStatusOnFill =
+      theme === "dark"
+        ? "rgba(245, 239, 230, 0.2)"
+        : "rgba(255, 255, 255, 0.5)";
+    const lightStatusOffHoverFill =
+      theme === "dark" ? "rgba(120, 0, 0, 0.82)" : DARK_THEME_BG;
+    const lightStatusOnHoverFill =
+      theme === "dark"
+        ? "rgba(245, 239, 230, 0.34)"
+        : "rgba(255, 255, 255, 0.82)";
 
-    const series: echarts.SeriesOption[] = types.map((accessType) => {
+    const statusTracks =
+      lightStatusTracks.length > 0
+        ? lightStatusTracks
+        : DEFAULT_LIGHT_STATUS_TRACKS;
+    const sliderBottom = 12;
+    const sliderHeight = 26;
+    const statusGridBottom = sliderBottom + sliderHeight + 8;
+    const statusRowHeight = 12;
+    const statusRowGap = 6;
+    const gridLeft = 56;
+    const statusGridHeight =
+      statusTracks.length * statusRowHeight +
+      Math.max(0, statusTracks.length - 1) * statusRowGap;
+    const mainGridBottom = statusGridBottom + statusGridHeight + 28;
+    const zoomAxisIndexes = [0, 1];
+
+    const accessSeries: echarts.SeriesOption[] = types.map((accessType) => {
       const color = TYPE_COLORS[accessType] || "#6b7280";
       const data = seriesData[accessType] || [];
       if (chartType === "bar") {
@@ -119,6 +173,8 @@ const AccessChart = ({
           name: accessType.toUpperCase(),
           type: "bar",
           stack: "total",
+          xAxisIndex: 0,
+          yAxisIndex: 0,
           data: data,
           itemStyle: { color: color },
           emphasis: {
@@ -132,6 +188,8 @@ const AccessChart = ({
         name: accessType.toUpperCase(),
         type: "line",
         stack: "total",
+        xAxisIndex: 0,
+        yAxisIndex: 0,
         data: data,
         showSymbol: false,
         lineStyle: { width: 0 },
@@ -146,6 +204,103 @@ const AccessChart = ({
       };
       return lineSeries;
     });
+
+    const lightStatusData = statusTracks.flatMap((track, trackIndex) =>
+      track.intervals.map((interval) => [
+        interval.startMs,
+        interval.endMs,
+        trackIndex,
+        interval.light ? 1 : 0,
+      ]),
+    );
+
+    const series: echarts.SeriesOption[] = [...accessSeries];
+    const lightStatusSeries: echarts.CustomSeriesOption = {
+      name: "Light status",
+      type: "custom",
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+      data: lightStatusData,
+      tooltip: {
+        trigger: "item",
+        formatter: (params: unknown) => {
+          if (!params || typeof params !== "object") {
+            return "";
+          }
+          const payload = params as {
+            value?: unknown;
+          };
+          const value = Array.isArray(payload.value) ? payload.value : [];
+          const startMs = toEpochMs(value[0]);
+          const endMs = toEpochMs(value[1]);
+          const rowIndexRaw = value[2];
+          const isOnState = Number(value[3]) === 1;
+          const rowIndex =
+            typeof rowIndexRaw === "number"
+              ? rowIndexRaw
+              : Number(rowIndexRaw ?? -1);
+          const label =
+            statusTracks[rowIndex]?.label != null
+              ? `Light status ${statusTracks[rowIndex].label}`
+              : "Light status";
+          if (startMs == null || endMs == null) {
+            return label;
+          }
+          const startLabel = sliderLabelDateTimeFormat.format(
+            new Date(startMs),
+          );
+          const endLabel = sliderLabelDateTimeFormat.format(new Date(endMs));
+          const durationLabel = formatDuration(endMs - startMs);
+          return `<div style="font-weight: 600; margin-bottom: 4px;">${label}</div>
+                  <div>State: ${isOnState ? "on" : "off"}</div>
+                  <div>${startLabel} - ${endLabel}</div>
+                  <div style="color: ${muted};">Duration: ${durationLabel}</div>`;
+        },
+      },
+      renderItem: (params, api) => {
+        const rowIndex = Number(api.value(2));
+        const isOnState = Number(api.value(3)) === 1;
+        const start = api.coord([Number(api.value(0)), rowIndex]);
+        const end = api.coord([Number(api.value(1)), rowIndex]);
+        const rowSize = 10;
+        const shape = echarts.graphic.clipRectByRect(
+          {
+            x: start[0],
+            y: start[1] - rowSize / 2 + 1,
+            width: Math.max(1, end[0] - start[0]),
+            height: Math.max(2, rowSize - 2),
+          },
+          params.coordSys as unknown as {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          },
+        );
+        if (!shape) {
+          return null;
+        }
+        return {
+          type: "rect",
+          shape,
+          style: api.style({
+            fill: isOnState ? lightStatusOnFill : lightStatusOffFill,
+            opacity: isOnState ? 1 : 0.9,
+          }),
+          emphasis: {
+            style: {
+              fill: isOnState
+                ? lightStatusOnHoverFill
+                : lightStatusOffHoverFill,
+              opacity: 1,
+              stroke: TYPE_COLORS.cl,
+              lineWidth: 1,
+            },
+          },
+        };
+      },
+    };
+    series.push(lightStatusSeries);
     const toggleChartTypeTitle = `Switch to ${chartType === "line" ? "bar" : "line"} chart`;
     const toggleChartTypeIcon =
       chartType === "line" ? BAR_CHART_ICON : LINE_CHART_ICON;
@@ -157,85 +312,9 @@ const AccessChart = ({
       axisValue?: string | number;
     };
 
-    const option: echarts.EChartsOption = {
-      animation: false,
-      textStyle: {
-        color: text,
-        fontFamily: "IBM Plex Mono, Menlo, monospace",
-      },
-      grid: {
-        left: 26,
-        right: 26,
-        top: 40,
-        bottom: 48,
-        containLabel: true,
-      },
-      legend: {
-        top: 8,
-        right: 24,
-        textStyle: {
-          color: text,
-          fontFamily: "IBM Plex Mono, Menlo, monospace",
-          fontSize: 11,
-        },
-        itemWidth: 12,
-        itemHeight: 12,
-        selected: Object.fromEntries(
-          types.map((type) => [type.toUpperCase(), !hiddenTypes.has(type)]),
-        ),
-        tooltip: {
-          show: true,
-          formatter: (params) => {
-            const { name } = params;
-            return TYPE_LABELS[name?.toLowerCase()] || "";
-          },
-        },
-      },
-      tooltip: {
-        trigger: "axis",
-        borderWidth: 1,
-        borderColor: border,
-        backgroundColor: bgAlt,
-        textStyle: {
-          color: text,
-          fontFamily: "IBM Plex Mono, Menlo, monospace",
-          fontSize: 11,
-        },
-        formatter: (params: unknown) => {
-          const items = (Array.isArray(params) ? params : [params]).filter(
-            (item) => item != null,
-          ) as TooltipItem[];
-          if (items.length === 0) return "";
-
-          const first = items[0];
-          const rawAxisValue = first.axisValue ?? first.value;
-          const timeMs = toEpochMs(rawAxisValue);
-          const formattedTime =
-            timeMs != null ? dateTimeFormat.format(new Date(timeMs)) : "";
-
-          let total = 0;
-          const lines = items.reduce<string[]>((acc, item) => {
-            const value = Array.isArray(item.value)
-              ? item.value[1]
-              : item.value;
-            if (
-              typeof value !== "number" ||
-              !Number.isFinite(value) ||
-              value <= 0
-            ) {
-              return acc;
-            }
-            total += value;
-            acc.push(`${item.marker ?? ""} ${item.seriesName ?? ""}: ${value}`);
-            return acc;
-          }, []);
-
-          return `<div style="font-weight: 600; margin-bottom: 4px;">${formattedTime}</div>
-                  <div style="color: ${muted}; margin-bottom: 4px;">Total: ${total}</div>
-                  ${lines.join("<br/>")}`;
-        },
-      },
-      xAxis: {
+    const xAxes: echarts.XAXisComponentOption[] = [
+      {
+        gridIndex: 0,
         type: "time",
         min: axisMin,
         max: axisMax,
@@ -260,7 +339,28 @@ const AccessChart = ({
           lineStyle: { color: gridLine },
         },
       },
-      yAxis: {
+    ];
+
+    xAxes.push({
+      gridIndex: 1,
+      type: "time",
+      min: axisMin,
+      max: axisMax,
+      axisPointer: {
+        show: false,
+      },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+      splitLine: {
+        show: true,
+        lineStyle: { color: gridLine },
+      },
+    });
+
+    const yAxes: echarts.YAXisComponentOption[] = [
+      {
+        gridIndex: 0,
         type: "value",
         axisLine: { lineStyle: { color: border } },
         axisLabel: {
@@ -269,6 +369,133 @@ const AccessChart = ({
         },
         splitLine: { lineStyle: { color: gridLine } },
       },
+    ];
+
+    yAxes.push({
+      gridIndex: 1,
+      type: "category",
+      inverse: true,
+      data: statusTracks.map((track) => track.label),
+      axisLine: {
+        show: true,
+        lineStyle: {
+          color: gridLine,
+          width: 1,
+        },
+      },
+      axisTick: { show: false },
+      axisLabel: {
+        color: muted,
+        fontSize: 10,
+      },
+      splitLine: { show: false },
+    });
+
+    const option: echarts.EChartsOption = {
+      animation: false,
+      textStyle: {
+        color: text,
+        fontFamily: "IBM Plex Mono, Menlo, monospace",
+      },
+      grid: [
+        {
+          left: gridLeft,
+          right: 26,
+          top: 40,
+          bottom: mainGridBottom,
+          containLabel: false,
+        },
+        {
+          left: gridLeft,
+          right: 26,
+          bottom: statusGridBottom,
+          height: statusGridHeight,
+          containLabel: false,
+        },
+      ],
+      legend: {
+        top: 8,
+        right: 24,
+        data: types.map((type) => type.toUpperCase()),
+        textStyle: {
+          color: text,
+          fontFamily: "IBM Plex Mono, Menlo, monospace",
+          fontSize: 11,
+        },
+        itemWidth: 12,
+        itemHeight: 12,
+        selected: Object.fromEntries(
+          types.map((type) => [type.toUpperCase(), !hiddenTypes.has(type)]),
+        ),
+        tooltip: {
+          show: true,
+          formatter: (params) => {
+            const { name } = params;
+            return TYPE_LABELS[name?.toLowerCase()] || "";
+          },
+        },
+      },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: {
+          type: "none",
+        },
+        borderWidth: 1,
+        borderColor: border,
+        backgroundColor: bgAlt,
+        textStyle: {
+          color: text,
+          fontFamily: "IBM Plex Mono, Menlo, monospace",
+          fontSize: 11,
+        },
+        formatter: (params: unknown) => {
+          const items = (Array.isArray(params) ? params : [params]).filter(
+            (item) => item != null,
+          ) as TooltipItem[];
+          const accessItems = items.filter(
+            (item) => item.seriesName !== "Light status",
+          );
+          if (accessItems.length === 0) {
+            return "";
+          }
+          const first = accessItems[0];
+          const rawAxisValue =
+            first?.axisValue ??
+            (!Array.isArray(params) &&
+            params &&
+            typeof params === "object" &&
+            "axisValue" in params
+              ? (params as { axisValue?: unknown }).axisValue
+              : undefined) ??
+            first?.value;
+          const timeMs = toEpochMs(rawAxisValue);
+          const formattedTime =
+            timeMs != null ? dateTimeFormat.format(new Date(timeMs)) : "";
+
+          let total = 0;
+          const lines = accessItems.reduce<string[]>((acc, item) => {
+            const value = Array.isArray(item.value)
+              ? item.value[1]
+              : item.value;
+            if (
+              typeof value !== "number" ||
+              !Number.isFinite(value) ||
+              value <= 0
+            ) {
+              return acc;
+            }
+            total += value;
+            acc.push(`${item.marker ?? ""} ${item.seriesName ?? ""}: ${value}`);
+            return acc;
+          }, []);
+
+          return `<div style="font-weight: 600; margin-bottom: 4px;">${formattedTime}</div>
+                  <div style="color: ${muted}; margin-bottom: 4px;">Total: ${total}</div>
+                  ${lines.join("<br/>")}`;
+        },
+      },
+      xAxis: xAxes,
+      yAxis: yAxes,
       toolbox: {
         show: true,
         orient: "vertical",
@@ -331,6 +558,7 @@ const AccessChart = ({
       dataZoom: [
         {
           type: "inside",
+          xAxisIndex: zoomAxisIndexes,
           startValue: rangeStart,
           endValue: endTime,
           minValueSpan: minRangeMs,
@@ -341,12 +569,13 @@ const AccessChart = ({
         },
         {
           type: "slider",
+          xAxisIndex: zoomAxisIndexes,
           startValue: rangeStart,
           endValue: endTime,
           minValueSpan: minRangeMs,
           maxValueSpan: maxRangeMs,
           height: 26,
-          bottom: 12,
+          bottom: sliderBottom,
           borderColor: border,
           backgroundColor: bgAlt,
           fillerColor: TYPE_COLORS.cl + "40",
@@ -365,7 +594,9 @@ const AccessChart = ({
       series: series,
     };
 
-    instance.setOption(option);
+    instance.setOption(option, {
+      replaceMerge: ["grid", "xAxis", "yAxis", "dataZoom", "series"],
+    });
 
     // keep toolbox select zoom in sync so "back" restores the current window baseline.
     const currentOption = instance.getOption() as {
@@ -484,6 +715,7 @@ const AccessChart = ({
     seriesData,
     theme,
     types,
+    lightStatusTracks,
     hiddenTypes,
     chartType,
   ]);
