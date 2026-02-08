@@ -186,17 +186,10 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     ? chartData.bins[chartData.bins.length - 1]
     : undefined;
   const axisWindowMs = zoomLimitSec * AXIS_WINDOW_MULTIPLIER * 1000;
-  const axisRightPaddingMs = zoomLimitSec * 1000;
-  const targetAxisMax = endTime + axisRightPaddingMs;
-  const boundedAxisMax = Math.min(
-    targetAxisMax,
-    availableRange.max ?? latestBin ?? targetAxisMax,
-  );
-  const axisMin = Math.max(
-    availableRange.min ?? boundedAxisMax - axisWindowMs,
-    boundedAxisMax - axisWindowMs,
-  );
-  const axisMax = boundedAxisMax;
+  const fallbackAxisMax = latestBin ?? endTime;
+  const axisMax = availableRange.max ?? fallbackAxisMax;
+  const axisMin =
+    availableRange.min ?? Math.max(0, axisMax - axisWindowMs);
   const lightStatusFetchRange = useMemo(() => {
     const startMs = summaryRange.min ?? availableRange.min;
     const endMs = summaryRange.max ?? availableRange.max;
