@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AccessChart from "./AccessChart";
-import type { AccessStatsResponse, RangeOption } from "../types";
+import type {
+  AccessStatsResponse,
+  LightStatusEvent,
+  LightStatusInterval,
+  RangeOption,
+  SummaryStatsResponse,
+} from "../types";
 import { parseMetaTime, getOptimalBinSec } from "../utils/time";
 
 type ChartSectionProps = {
@@ -14,6 +20,12 @@ type ChartSectionProps = {
 type CacheItem = {
   data: AccessStatsResponse;
   loadedAt: number;
+};
+
+type LightStatusTrack = {
+  area: number;
+  label: string;
+  intervals: LightStatusInterval[];
 };
 
 const MIN_RANGE_SEC = 60;
@@ -30,6 +42,9 @@ const RANGE_OPTIONS: RangeOption[] = [
 
 const DEFAULT_OPTION = RANGE_OPTIONS.find((opt) => opt.id === "7d")!;
 const API_ENDPOINT = `${import.meta.env.VITE_API_PATH}/access`;
+const SUMMARY_ENDPOINT = `${import.meta.env.VITE_API_PATH}/total`;
+const LIGHT_STATUS_ENDPOINT = "/api/v1/light-bot";
+const LIGHT_STATUS_AREAS = [0, 1] as const;
 
 function makeCacheKey(
   endTimeEpochMs: number,
@@ -37,6 +52,17 @@ function makeCacheKey(
   binSec: number,
 ) {
   return `${Math.round(endTimeEpochMs)}:${Math.round(rangeSec)}:${binSec}`;
+}
+
+function buildSummaryUrl() {
+  return new URL(SUMMARY_ENDPOINT, window.location.origin).toString();
+}
+
+function buildLightStatusUrl(startTime: number, endTime: number) {
+  const url = new URL(LIGHT_STATUS_ENDPOINT, window.location.origin);
+  url.searchParams.set("startTime", `${Math.round(startTime)}`);
+  url.searchParams.set("endTime", `${Math.round(endTime)}`);
+  return url.toString();
 }
 
 const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
@@ -53,12 +79,22 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   const [cachedData, setCachedData] = useState<Map<string, CacheItem>>(
     new Map(),
   );
+  const [summaryRange, setSummaryRange] = useState<{
+    min?: number;
+    max?: number;
+  }>({});
+  const [lightStatusEvents, setLightStatusEvents] = useState<LightStatusEvent[]>(
+    [],
+  );
 
   const cacheRef = useRef(new Map<string, CacheItem>());
   const inFlightRef = useRef(new Map<string, Promise<AccessStatsResponse>>());
   const requestIdRef = useRef(0);
   const zoomDebounceRef = useRef<number | null>(null);
   const isInitialLoadRef = useRef(true);
+  const [lightStatusLoadedKey, setLightStatusLoadedKey] = useState<
+    string | null
+  >(null);
 
   const dateTimeFormat = useMemo(
     () =>
@@ -70,6 +106,40 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       }),
     [],
   );
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadSummaryRange = async () => {
+      try {
+        const response = await fetch(buildSummaryUrl());
+        if (!response.ok) {
+          return;
+        }
+        const data = (await response.json()) as SummaryStatsResponse;
+        if (isCancelled) {
+          return;
+        }
+        const min = parseMetaTime(data.availableMin);
+        const max = parseMetaTime(data.availableMax);
+        if (!Number.isFinite(min) || !Number.isFinite(max)) {
+          return;
+        }
+        setSummaryRange({
+          min: min as number,
+          max: max as number,
+        });
+      } catch {
+        // ignore summary range fetch errors and fallback to access metadata.
+      }
+    };
+
+    void loadSummaryRange();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   const allRangeSec = useMemo(() => {
     if (availableRange.min == null || availableRange.max == null) {
@@ -127,6 +197,14 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     boundedAxisMax - axisWindowMs,
   );
   const axisMax = boundedAxisMax;
+  const lightStatusFetchRange = useMemo(() => {
+    const startMs = summaryRange.min ?? availableRange.min;
+    const endMs = summaryRange.max ?? availableRange.max;
+    if (startMs == null || endMs == null || endMs <= startMs) {
+      return null;
+    }
+    return { startMs, endMs };
+  }, [availableRange.max, availableRange.min, summaryRange.max, summaryRange.min]);
 
   const seriesData = useMemo(() => {
     const dataByType: Record<string, Map<number, number>> = {};
@@ -204,6 +282,52 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
       return indexA - indexB;
     });
   }, [chartData, cachedData]);
+
+  const lightStatusTracks = useMemo<LightStatusTrack[]>(() => {
+    const byArea = new Map<number, LightStatusEvent[]>();
+    lightStatusEvents.forEach((event) => {
+      const existing = byArea.get(event.area);
+      if (existing) {
+        existing.push(event);
+      } else {
+        byArea.set(event.area, [event]);
+      }
+    });
+
+    return LIGHT_STATUS_AREAS.map((area) => {
+      const events = byArea.get(area) ?? [];
+        const compacted: LightStatusEvent[] = [];
+
+        events.forEach((event) => {
+          const previous = compacted[compacted.length - 1];
+          if (previous && previous.light === event.light) {
+            return;
+          }
+          compacted.push(event);
+        });
+
+        const intervals: LightStatusInterval[] = compacted
+          .map((event, index) => {
+            const next = compacted[index + 1];
+            const startMs = event.timestamp;
+            const endMs =
+              next?.timestamp ?? lightStatusFetchRange?.endMs ?? endTime;
+            return {
+              light: event.light,
+              area: event.area,
+              startMs,
+              endMs,
+            };
+          })
+          .filter((interval) => interval.endMs > interval.startMs);
+
+        return {
+          area,
+          label: `R${area}`,
+          intervals,
+        };
+      });
+  }, [endTime, lightStatusEvents, lightStatusFetchRange]);
 
   const evictOldestCache = useCallback(() => {
     if (cacheRef.current.size <= MAX_CACHE_SIZE) {
@@ -398,6 +522,69 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   }, [endTime, rangeSec, binSec, loadRange]);
 
   useEffect(() => {
+    if (!lightStatusFetchRange) {
+      return;
+    }
+    const requestKey = `${lightStatusFetchRange.startMs}:${lightStatusFetchRange.endMs}`;
+    if (lightStatusLoadedKey === requestKey) {
+      return;
+    }
+    let isCancelled = false;
+
+    const loadLightStatus = async () => {
+      try {
+        const response = await fetch(
+          buildLightStatusUrl(
+            lightStatusFetchRange.startMs,
+            lightStatusFetchRange.endMs,
+          ),
+        );
+        if (!response.ok) {
+          throw new Error(`Request failed: ${response.status}`);
+        }
+
+        const data = (await response.json()) as LightStatusEvent[];
+        if (!Array.isArray(data) || isCancelled) {
+          return;
+        }
+
+        const normalized = data
+          .map((item) => ({
+            light: Boolean(item.light),
+            area: Number(item.area),
+            timestamp: Number(item.timestamp),
+          }))
+          .filter(
+            (item) => Number.isFinite(item.area) && Number.isFinite(item.timestamp),
+          )
+          .sort((left, right) =>
+            left.area === right.area
+              ? left.timestamp - right.timestamp
+              : left.area - right.area,
+          );
+
+        if (isCancelled) {
+          return;
+        }
+        setLightStatusEvents(normalized);
+        setLightStatusLoadedKey(requestKey);
+      } catch {
+        if (isCancelled) {
+          return;
+        }
+        setLightStatusEvents([]);
+        setLightStatusLoadedKey(null);
+      }
+    };
+
+    void loadLightStatus();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [lightStatusFetchRange, lightStatusLoadedKey]);
+
+  useEffect(() => {
     return () => {
       if (zoomDebounceRef.current) {
         window.clearTimeout(zoomDebounceRef.current);
@@ -547,6 +734,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         <AccessChart
           seriesData={visibleSeriesData}
           types={types}
+          lightStatusTracks={lightStatusTracks}
           rangeStart={rangeStart}
           endTime={endTime}
           xAxisLabelMode={xAxisLabelMode}
