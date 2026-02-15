@@ -22,29 +22,22 @@ const AppHeader: FC<AppHeaderProps> = ({ theme, onToggle }) => {
           </button>
           <a
             className="icon-link"
-            href="https://t.me/"
+            href="https://t.me/SvitloeRadujnyBot"
             target="_blank"
             rel="noreferrer"
             aria-label="Telegram"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-            >
-              <path d="M22 2L11 13" />
-              <path d="M22 2L15 22L11 13L2 9L22 2Z" />
-            </svg>
+            <span className="icon-mark tg-mark" aria-hidden="true" />
           </a>
           <a
             className="icon-link"
-            href="https://github.com/"
+            href="https://github.com/Coder-ak/"
             target="_blank"
             rel="noreferrer"
             aria-label="GitHub"
           >
             <svg
+              className="icon-mark"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"

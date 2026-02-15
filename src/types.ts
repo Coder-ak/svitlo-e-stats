@@ -53,3 +53,54 @@ export type CardItem = {
   items?: { label: string; value: string }[];
   table?: { headers: string[]; rows: string[][] };
 };
+
+export type DayCountPoint = {
+  date: string;
+  count: number;
+};
+
+export type TypeMaxDailyRow = {
+  type: string;
+  last7d?: DayCountPoint | null;
+  allTime?: DayCountPoint | null;
+};
+
+export type OutageInfo = {
+  start: number;
+  end: number;
+  durationSec: number;
+};
+
+export type GlobalInsights = {
+  maxRequestsDayAllTime?: DayCountPoint | null;
+  maxRequestsDayLast7d?: DayCountPoint | null;
+  maxDailyByType?: TypeMaxDailyRow[] | null;
+  combinedOffDurationSec?: number | null;
+};
+
+export type AreaInsights = {
+  totalOffDurationSec?: number | null;
+  longestOutageSec?: number | null;
+  outagesTotal?: number | null;
+  lastOutage?: OutageInfo | null;
+  uptimePct?: number | null;
+  outagesLast7d?: number | null;
+  avgOutagesPerWeekAllTime?: number | null;
+  avgOutageSecAllTime?: number | null;
+  avgOutageSecLast7d?: number | null;
+  avgOutageSecLast30d?: number | null;
+  medianOutageSecAllTime?: number | null;
+};
+
+export type CardsInsightsResponse = {
+  range?: {
+    startTime: number;
+    endTime: number;
+  };
+  global?: GlobalInsights | null;
+  areas?: {
+    r0?: AreaInsights | null;
+    r1?: AreaInsights | null;
+    [key: string]: AreaInsights | null | undefined;
+  } | null;
+};
