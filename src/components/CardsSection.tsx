@@ -221,6 +221,9 @@ const CardsSection: FC = () => {
       <div className="panel-header">
         <div>
           <h2 className="section-title">Insights</h2>
+          <p className="section-subtitle">
+            Key metrics for request load and outage trends.
+          </p>
         </div>
         <div className="panel-actions cards-panel-actions">
           {error ? <span className="cards-error">{error}</span> : null}
@@ -231,9 +234,6 @@ const CardsSection: FC = () => {
       <div className="cards-shell">
         <div className="cards-grid cards-grid-insights">
           <div className="cards-global-column">
-            <p className="section-subtitle cards-column-note">
-              Key metrics for request load and outage trends.
-            </p>
             <div className="card">
               <h3 className="card-title">Global load and outages</h3>
               <ul className="kv-list">

@@ -654,6 +654,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     : null;
   const rangeStartLabel = dateTimeFormat.format(new Date(rangeStart));
   const rangeEndLabel = dateTimeFormat.format(new Date(endTime));
+  const selectedIntervalLabel = `${rangeStartLabel} - ${rangeEndLabel}`;
   const latestSampleLabel = latestSample
     ? dateTimeFormat.format(new Date(latestSample))
     : "--";
@@ -700,9 +701,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
           </div>
           <div className="range-meta">
             <span>Selected interval:</span>
-            <span>{rangeStartLabel}</span>
-            <span>–</span>
-            <span>{rangeEndLabel}</span>
+            <span>{selectedIntervalLabel}</span>
           </div>
         </div>
       </div>
