@@ -323,6 +323,7 @@ const AccessChart = ({
         axisLabel: {
           color: muted,
           fontSize: 11,
+          hideOverlap: true,
           formatter: (value: number) => {
             const date = new Date(value);
             if (xAxisLabelMode === "time") {
