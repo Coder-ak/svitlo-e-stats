@@ -9,9 +9,9 @@ import type {
   OutageInfo,
   TypeMaxDailyRow,
 } from "../types";
-import { resolveApiEndpoint } from "../utils/api";
+import { API_ROOT } from "../utils/api";
 
-const CARDS_INSIGHTS_ENDPOINT = `${import.meta.env.VITE_API_PATH}/insights`;
+const CARDS_INSIGHTS_ENDPOINT = `${API_ROOT}/stats/insights`;
 const AREA_TABS = [
   { id: "r0", label: "R0" },
   { id: "r1", label: "R1 – R2" },
@@ -166,9 +166,7 @@ const CardsSection: FC = () => {
 
     const loadInsights = async () => {
       try {
-        const response = await fetch(
-          resolveApiEndpoint(CARDS_INSIGHTS_ENDPOINT),
-        );
+        const response = await fetch(CARDS_INSIGHTS_ENDPOINT);
         if (!response.ok) {
           throw new Error(`Request failed: ${response.status}`);
         }

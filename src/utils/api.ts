@@ -1,18 +1,9 @@
-export function resolveApiEndpoint(path?: string) {
-  const base = import.meta.env.VITE_API_URL?.trim();
-  if (!path) {
-    return base || "";
-  }
-  if (path.startsWith("http")) {
-    return path;
-  }
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  if (import.meta.env.DEV) {
-    return normalizedPath;
-  }
-  if (base) {
-    const baseTrimmed = base.replace(/\/$/, "");
-    return `${baseTrimmed}${normalizedPath}`;
-  }
-  return normalizedPath;
+const API_BASE_URL = import.meta.env.VITE_API_URL;
+const API_PATH = import.meta.env.VITE_API_PATH;
+
+if (!API_BASE_URL || !API_PATH) {
+  throw new Error("VITE_API_URL and VITE_API_PATH are required.");
 }
+
+export const API_BASE = API_BASE_URL;
+export const API_ROOT = `${API_BASE_URL}${API_PATH}`;

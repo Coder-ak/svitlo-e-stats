@@ -3,11 +3,12 @@ import type { ReactNode } from "react";
 import type { SummaryStatsResponse } from "../types";
 import { SummaryContext } from "./SummaryContext";
 import type { SummaryContextValue } from "./SummaryContext";
+import { API_ROOT } from "../utils/api";
 
-const SUMMARY_ENDPOINT = `${import.meta.env.VITE_API_PATH}/total`;
+const SUMMARY_ENDPOINT = `${API_ROOT}/stats/total`;
 
 function buildSummaryUrl(refresh: boolean) {
-  const url = new URL(SUMMARY_ENDPOINT, window.location.origin);
+  const url = new URL(SUMMARY_ENDPOINT);
   if (refresh) {
     url.searchParams.set("refresh", "true");
   }
