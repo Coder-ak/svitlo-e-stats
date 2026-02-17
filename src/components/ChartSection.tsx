@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { parseMetaTime, getOptimalBinSec } from "../utils/time";
 import { useSummary } from "../context/useSummary";
+import { API_ROOT } from "../utils/api";
 
 type ChartSectionProps = {
   theme: "light" | "dark";
@@ -41,8 +42,8 @@ const RANGE_OPTIONS: RangeOption[] = [
 ];
 
 const DEFAULT_OPTION = RANGE_OPTIONS.find((opt) => opt.id === "7d")!;
-const API_ENDPOINT = `${import.meta.env.VITE_API_PATH}/access`;
-const LIGHT_STATUS_ENDPOINT = "/api/v1/light-bot";
+const API_ENDPOINT = `${API_ROOT}/stats/access`;
+const LIGHT_STATUS_ENDPOINT = API_ROOT;
 const LIGHT_STATUS_AREAS = [0, 1] as const;
 
 function makeCacheKey(
@@ -54,7 +55,7 @@ function makeCacheKey(
 }
 
 function buildLightStatusUrl(startTime: number, endTime: number) {
-  const url = new URL(LIGHT_STATUS_ENDPOINT, window.location.origin);
+  const url = new URL(LIGHT_STATUS_ENDPOINT);
   url.searchParams.set("startTime", `${Math.round(startTime)}`);
   url.searchParams.set("endTime", `${Math.round(endTime)}`);
   return url.toString();
@@ -334,7 +335,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         return inFlight;
       }
 
-      const url = new URL(API_ENDPOINT, window.location.origin);
+      const url = new URL(API_ENDPOINT);
       url.searchParams.set("endTime", `${Math.round(targetEndTime)}`);
       url.searchParams.set("rangeSec", `${Math.round(targetRangeSec)}`);
       url.searchParams.set("binInterval", `${targetBinSec}`);

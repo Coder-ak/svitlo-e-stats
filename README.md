@@ -19,14 +19,14 @@ It includes:
 ## Configuration
 
 Environment variables:
-- `VITE_API_PATH` (required): API base path, e.g. `/api/v1/light-bot/stats`
-- `VITE_API_URL` (optional): upstream API host, used by Vite proxy in development and for endpoint resolving in production builds
+- `VITE_API_PATH` (required): API base path, e.g. `/api/v1/light-bot`
+- `VITE_API_URL` (required): upstream API host
 
 Example `.env`:
 
 ```env
 VITE_API_URL="https://svitloe.coderak.net"
-VITE_API_PATH="/api/v1/light-bot/stats"
+VITE_API_PATH="/api/v1/light-bot"
 ```
 
 ## Build and run
