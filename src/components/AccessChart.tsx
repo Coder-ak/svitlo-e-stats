@@ -1,8 +1,30 @@
 import { useEffect, useRef, useState } from "react";
-import * as echarts from "echarts";
+import { BarChart, CustomChart, LineChart } from "echarts/charts";
+import {
+  DataZoomComponent,
+  GridComponent,
+  LegendComponent,
+  ToolboxComponent,
+  TooltipComponent,
+} from "echarts/components";
+import { graphic, init, use as registerECharts } from "echarts/core";
+import { CanvasRenderer } from "echarts/renderers";
+import type * as echarts from "echarts";
 import { TYPE_LABELS } from "../const/typeLabels";
 import { normalizeZoomRange, toEpochMs } from "../utils/time";
 import type { LightStatusInterval } from "../types";
+
+registerECharts([
+  BarChart,
+  LineChart,
+  CustomChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  DataZoomComponent,
+  ToolboxComponent,
+  CanvasRenderer,
+]);
 
 type LightStatusTrack = {
   area: number;
@@ -96,7 +118,7 @@ const AccessChart = ({
   onZoomRange,
 }: AccessChartProps) => {
   const chartRef = useRef<HTMLDivElement | null>(null);
-  const chartInstanceRef = useRef<echarts.ECharts | null>(null);
+  const chartInstanceRef = useRef<ReturnType<typeof init> | null>(null);
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
   const [isZoomSelectActive, setIsZoomSelectActive] = useState(false);
   const [chartType, setChartType] = useState<"line" | "bar">("line");
@@ -109,7 +131,7 @@ const AccessChart = ({
     if (!chartRef.current) {
       return;
     }
-    const instance = echarts.init(chartRef.current, undefined, {
+    const instance = init(chartRef.current, undefined, {
       renderer: "canvas",
     });
     chartInstanceRef.current = instance;
@@ -263,7 +285,7 @@ const AccessChart = ({
         const start = api.coord([Number(api.value(0)), rowIndex]);
         const end = api.coord([Number(api.value(1)), rowIndex]);
         const rowSize = 10;
-        const shape = echarts.graphic.clipRectByRect(
+        const shape = graphic.clipRectByRect(
           {
             x: start[0],
             y: start[1] - rowSize / 2 + 1,

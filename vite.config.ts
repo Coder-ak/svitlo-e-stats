@@ -14,6 +14,31 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) {
+              return undefined;
+            }
+            if (id.includes("node_modules/echarts/")) {
+              return "echarts";
+            }
+            if (id.includes("node_modules/zrender/")) {
+              return "zrender";
+            }
+            if (
+              id.includes("node_modules/react/") ||
+              id.includes("node_modules/react-dom/") ||
+              id.includes("node_modules/scheduler/")
+            ) {
+              return "react-vendor";
+            }
+            return "vendor";
+          },
+        },
+      },
+    },
     server: proxyTarget
       ? {
           proxy: {
