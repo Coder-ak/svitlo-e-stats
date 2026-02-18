@@ -8,6 +8,9 @@ It includes:
 - outage and request-load insights split by area tabs (R0, R1-R2)
 - light/dark theme toggle and cached window status in footer
 
+## Preview
+![Site preview](https://stats.svitloe.coderak.net/stats.svitloe.coderak.net.jpg)
+
 ## Tech stack
 
 - React 19
