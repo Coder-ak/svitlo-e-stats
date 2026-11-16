@@ -162,8 +162,6 @@ const CardsSection: FC = () => {
       setLoading(true);
     }
 
-    setError(null);
-
     const loadInsights = async () => {
       try {
         const response = await fetch(CARDS_INSIGHTS_ENDPOINT);
@@ -177,6 +175,7 @@ const CardsSection: FC = () => {
         }
 
         setInsights(data);
+        setError(null);
         hasInsightsRef.current = true;
       } catch (err) {
         if (requestId !== requestIdRef.current) {

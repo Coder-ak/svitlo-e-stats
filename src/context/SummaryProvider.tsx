@@ -15,6 +15,14 @@ function buildSummaryUrl(refresh: boolean) {
   return url.toString();
 }
 
+async function fetchSummary(forceRefresh: boolean) {
+  const response = await fetch(buildSummaryUrl(forceRefresh));
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+  return (await response.json()) as SummaryStatsResponse;
+}
+
 export function SummaryProvider({ children }: { children: ReactNode }) {
   const [summary, setSummary] = useState<SummaryStatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,19 +33,8 @@ export function SummaryProvider({ children }: { children: ReactNode }) {
 
   const loadSummary = useCallback(async (forceRefresh: boolean) => {
     const requestId = ++requestIdRef.current;
-    if (forceRefresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-
     try {
-      const response = await fetch(buildSummaryUrl(forceRefresh));
-      if (!response.ok) {
-        throw new Error(`Request failed: ${response.status}`);
-      }
-      const data = (await response.json()) as SummaryStatsResponse;
+      const data = await fetchSummary(forceRefresh);
       if (requestId !== requestIdRef.current) {
         return;
       }
@@ -59,7 +56,27 @@ export function SummaryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void loadSummary(false);
+    const requestId = ++requestIdRef.current;
+    const loadInitialSummary = async () => {
+      try {
+        const data = await fetchSummary(false);
+        if (requestId === requestIdRef.current) {
+          setSummary(data);
+        }
+      } catch (err) {
+        if (requestId === requestIdRef.current) {
+          const message =
+            err instanceof Error ? err.message : "Failed to load summary.";
+          setError(message);
+        }
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadInitialSummary();
 
     return () => {
       requestIdRef.current += 1;
@@ -68,6 +85,8 @@ export function SummaryProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     setRefreshSignal((prev) => prev + 1);
+    setRefreshing(true);
+    setError(null);
     await loadSummary(true);
   }, [loadSummary]);
 

@@ -487,9 +487,6 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     }
     cacheRef.current.clear();
     inFlightRef.current.clear();
-    setCachedData(new Map());
-    setLightStatusLoadedKey(null);
-    setChartData(null);
     isInitialLoadRef.current = false;
     void loadRange(endTime, rangeSec, binSec);
   }, [binSec, endTime, loadRange, rangeSec, refreshSignal]);
@@ -502,7 +499,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     if (!lightStatusFetchRange) {
       return;
     }
-    const requestKey = `${lightStatusFetchRange.startMs}:${lightStatusFetchRange.endMs}`;
+    const requestKey = `${refreshSignal}:${lightStatusFetchRange.startMs}:${lightStatusFetchRange.endMs}`;
     if (lightStatusLoadedKey === requestKey) {
       return;
     }
@@ -559,7 +556,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     return () => {
       isCancelled = true;
     };
-  }, [lightStatusFetchRange, lightStatusLoadedKey]);
+  }, [lightStatusFetchRange, lightStatusLoadedKey, refreshSignal]);
 
   useEffect(() => {
     return () => {
@@ -569,11 +566,11 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     };
   }, []);
 
-  const handleRangeClick = (option: RangeOption) => {
+  const handleRangeClick = (option: RangeOption, now: number) => {
     const targetEnd =
       option.id === "all" && effectiveAvailableRange.max
         ? effectiveAvailableRange.max
-        : Date.now();
+        : now;
     setSelectedOption(option);
     setZoomLimitSec(option.seconds);
     setEndTime(targetEnd);
@@ -693,7 +690,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
                   key={option.id}
                   type="button"
                   className={`range-button${isActive ? " active" : ""}`}
-                  onClick={() => handleRangeClick(option)}
+                  onClick={() => handleRangeClick(option, Date.now())}
                 >
                   {option.label}
                 </button>
