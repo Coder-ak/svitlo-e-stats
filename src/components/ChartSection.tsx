@@ -6,7 +6,7 @@ import type {
   LightStatusInterval,
   RangeOption,
 } from "../types";
-import { parseMetaTime, getOptimalBinSec } from "../utils/time";
+import { parseMetaTime } from "../utils/time";
 import { useSummary } from "../context/useSummary";
 import { API_ROOT } from "../utils/api";
 
@@ -33,6 +33,13 @@ const MIN_RANGE_SEC = 60;
 const MIN_RANGE_RATIO = 1 / 7;
 const AXIS_WINDOW_MULTIPLIER = 7;
 const MAX_CACHE_SIZE = 20;
+const MAX_LIGHT_STATUS_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+
+type LightStatusWindow = {
+  startMs: number;
+  endMs: number;
+  events: LightStatusEvent[];
+};
 
 const RANGE_OPTIONS: RangeOption[] = [
   { id: "1h", label: "1H", seconds: 60 * 60, binSec: 60 },
@@ -85,13 +92,14 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   const requestIdRef = useRef(0);
   const zoomDebounceRef = useRef<number | null>(null);
   const isInitialLoadRef = useRef(true);
-  const [lightStatusLoadedKey, setLightStatusLoadedKey] = useState<
-    string | null
-  >(null);
+  const lightStatusWindowsRef = useRef<LightStatusWindow[]>([]);
+  const lightStatusInFlightRef = useRef(new Map<string, Promise<void>>());
+  const lightStatusRefreshRef = useRef(refreshSignal);
 
   const dateTimeFormat = useMemo(
     () =>
-      new Intl.DateTimeFormat("en-GB", {
+          new Intl.DateTimeFormat("en-GB", {
+        year: "2-digit",
         day: "2-digit",
         month: "short",
         hour: "2-digit",
@@ -109,43 +117,12 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     [availableRange.max, availableRange.min, summaryMax, summaryMin],
   );
 
-  const allRangeSec = useMemo(() => {
-    if (
-      effectiveAvailableRange.min == null ||
-      effectiveAvailableRange.max == null
-    ) {
-      return null;
-    }
-    const diffSec = Math.round(
-      (effectiveAvailableRange.max - effectiveAvailableRange.min) / 1000,
-    );
-    return diffSec > 0 ? diffSec : null;
-  }, [effectiveAvailableRange.max, effectiveAvailableRange.min]);
-
-  const rangeOptions = useMemo(() => {
-    if (!allRangeSec) {
-      return RANGE_OPTIONS;
-    }
-    return [
-      ...RANGE_OPTIONS,
-      {
-        id: "all",
-        label: "ALL",
-        seconds: allRangeSec,
-        binSec: getOptimalBinSec(allRangeSec),
-      },
-    ];
-  }, [allRangeSec]);
+  const rangeOptions = RANGE_OPTIONS;
 
   const rangeSec = selectedOption.seconds;
   const binSec = selectedOption.binSec;
   const rangeStart = endTime - rangeSec * 1000;
-  const xAxisLabelMode =
-    selectedOption.id === "all"
-      ? "date"
-      : rangeSec <= 60 * 60
-        ? "time"
-        : "datetime";
+  const xAxisLabelMode = rangeSec <= 60 * 60 ? "time" : "datetime";
   const minRangeSec = Math.min(
     zoomLimitSec,
     Math.max(MIN_RANGE_SEC, Math.round(zoomLimitSec * MIN_RANGE_RATIO)),
@@ -162,13 +139,30 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   const axisMin =
     effectiveAvailableRange.min ?? Math.max(0, axisMax - axisWindowMs);
   const lightStatusFetchRange = useMemo(() => {
-    const startMs = effectiveAvailableRange.min;
-    const endMs = effectiveAvailableRange.max;
-    if (startMs == null || endMs == null || endMs <= startMs) {
+    const availableMin = effectiveAvailableRange.min;
+    const availableMax = effectiveAvailableRange.max;
+    if (
+      availableMin == null ||
+      availableMax == null ||
+      availableMax <= availableMin
+    ) {
       return null;
     }
-    return { startMs, endMs };
-  }, [effectiveAvailableRange.max, effectiveAvailableRange.min]);
+    const visibleStart = Math.max(rangeStart, availableMin);
+    const visibleEnd = Math.min(endTime, availableMax);
+    if (visibleEnd <= visibleStart) return null;
+
+    const startMs = Math.max(
+      availableMin,
+      visibleEnd - MAX_LIGHT_STATUS_RANGE_MS,
+    );
+    return { startMs, endMs: visibleEnd, visibleStart, visibleEnd };
+  }, [
+    endTime,
+    effectiveAvailableRange.max,
+    effectiveAvailableRange.min,
+    rangeStart,
+  ]);
 
   const seriesData = useMemo(() => {
     const dataByType: Record<string, Map<number, number>> = {};
@@ -275,7 +269,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
             const next = compacted[index + 1];
             const startMs = event.timestamp;
             const endMs =
-              next?.timestamp ?? lightStatusFetchRange?.endMs ?? endTime;
+              next?.timestamp ?? endTime;
             return {
               light: event.light,
               area: event.area,
@@ -291,7 +285,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
           intervals,
         };
       });
-  }, [endTime, lightStatusEvents, lightStatusFetchRange]);
+  }, [endTime, lightStatusEvents]);
 
   const evictOldestCache = useCallback(() => {
     if (cacheRef.current.size <= MAX_CACHE_SIZE) {
@@ -499,11 +493,24 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
     if (!lightStatusFetchRange) {
       return;
     }
-    const requestKey = `${refreshSignal}:${lightStatusFetchRange.startMs}:${lightStatusFetchRange.endMs}`;
-    if (lightStatusLoadedKey === requestKey) {
+    if (lightStatusRefreshRef.current !== refreshSignal) {
+      lightStatusRefreshRef.current = refreshSignal;
+      lightStatusWindowsRef.current = [];
+      lightStatusInFlightRef.current.clear();
+      setLightStatusEvents([]);
+    }
+
+    const isCovered = lightStatusWindowsRef.current.some(
+      (window) =>
+        window.startMs <= lightStatusFetchRange.visibleStart &&
+        window.endMs >= lightStatusFetchRange.visibleEnd,
+    );
+    if (isCovered) {
       return;
     }
-    let isCancelled = false;
+
+    const requestKey = `${refreshSignal}:${lightStatusFetchRange.startMs}:${lightStatusFetchRange.endMs}`;
+    if (lightStatusInFlightRef.current.has(requestKey)) return;
 
     const loadLightStatus = async () => {
       try {
@@ -518,9 +525,7 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
         }
 
         const data = (await response.json()) as LightStatusEvent[];
-        if (!Array.isArray(data) || isCancelled) {
-          return;
-        }
+        if (!Array.isArray(data)) return;
 
         const normalized = data
           .map((item) => ({
@@ -529,7 +534,8 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
             timestamp: Number(item.timestamp),
           }))
           .filter(
-            (item) => Number.isFinite(item.area) && Number.isFinite(item.timestamp),
+            (item) =>
+              Number.isFinite(item.area) && Number.isFinite(item.timestamp),
           )
           .sort((left, right) =>
             left.area === right.area
@@ -537,26 +543,44 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
               : left.area - right.area,
           );
 
-        if (isCancelled) {
-          return;
-        }
-        setLightStatusEvents(normalized);
-        setLightStatusLoadedKey(requestKey);
+        if (refreshSignal !== lightStatusRefreshRef.current) return;
+
+        lightStatusWindowsRef.current = [
+          ...lightStatusWindowsRef.current.filter(
+            (window) =>
+              window.startMs !== lightStatusFetchRange.startMs ||
+              window.endMs !== lightStatusFetchRange.endMs,
+          ),
+          {
+            startMs: lightStatusFetchRange.startMs,
+            endMs: lightStatusFetchRange.endMs,
+            events: normalized,
+          },
+        ];
+
+        const uniqueEvents = new Map<string, LightStatusEvent>();
+        lightStatusWindowsRef.current.forEach((window) => {
+          window.events.forEach((event) => {
+            uniqueEvents.set(`${event.area}:${event.timestamp}`, event);
+          });
+        });
+        setLightStatusEvents(
+          Array.from(uniqueEvents.values()).sort((left, right) =>
+            left.area === right.area
+              ? left.timestamp - right.timestamp
+              : left.area - right.area,
+          ),
+        );
       } catch {
-        if (isCancelled) {
-          return;
-        }
-        setLightStatusEvents([]);
-        setLightStatusLoadedKey(null);
+        // Keep already loaded status windows available if an adjacent fetch fails.
+      } finally {
+        lightStatusInFlightRef.current.delete(requestKey);
       }
     };
 
-    void loadLightStatus();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [lightStatusFetchRange, lightStatusLoadedKey, refreshSignal]);
+    const request = loadLightStatus();
+    lightStatusInFlightRef.current.set(requestKey, request);
+  }, [lightStatusFetchRange, refreshSignal]);
 
   useEffect(() => {
     return () => {
@@ -567,13 +591,9 @@ const ChartSection = ({ theme, onMetaChange }: ChartSectionProps) => {
   }, []);
 
   const handleRangeClick = (option: RangeOption, now: number) => {
-    const targetEnd =
-      option.id === "all" && effectiveAvailableRange.max
-        ? effectiveAvailableRange.max
-        : now;
     setSelectedOption(option);
     setZoomLimitSec(option.seconds);
-    setEndTime(targetEnd);
+    setEndTime(now);
     isInitialLoadRef.current = false;
   };
 
