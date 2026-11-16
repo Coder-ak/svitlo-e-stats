@@ -7,34 +7,21 @@ export default defineConfig(({ mode }) => {
   const proxyTarget = env.VITE_API_URL;
 
   return {
-    plugins: [
-      react({
-        babel: {
-          plugins: [["babel-plugin-react-compiler"]],
-        },
-      }),
-    ],
+    plugins: [react()],
     build: {
-      rollupOptions: {
+      rolldownOptions: {
         output: {
-          manualChunks(id) {
-            if (!id.includes("node_modules")) {
-              return undefined;
-            }
-            if (id.includes("node_modules/echarts/")) {
-              return "echarts";
-            }
-            if (id.includes("node_modules/zrender/")) {
-              return "zrender";
-            }
-            if (
-              id.includes("node_modules/react/") ||
-              id.includes("node_modules/react-dom/") ||
-              id.includes("node_modules/scheduler/")
-            ) {
-              return "react-vendor";
-            }
-            return "vendor";
+          strictExecutionOrder: true,
+          codeSplitting: {
+            groups: [
+              {
+                name: "echarts",
+                test: /node_modules[\\/](echarts|zrender)[\\/]/,
+                minSize: 0,
+                maxSize: 350_000,
+                priority: 10,
+              },
+            ],
           },
         },
       },

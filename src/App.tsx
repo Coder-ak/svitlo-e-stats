@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from "react";
 import "./App.less";
 import AppHeader from "./components/AppHeader";
 import TotalsSection from "./components/TotalsSection";
-import ChartSection from "./components/ChartSection";
 import CardsSection from "./components/CardsSection";
 import AppFooter from "./components/AppFooter";
 import { SummaryProvider } from "./context/SummaryProvider";
+
+const ChartSection = lazy(() => import("./components/ChartSection"));
 
 function App() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -42,7 +50,15 @@ function App() {
 
         <main className="app-main">
           <TotalsSection />
-          <ChartSection theme={theme} onMetaChange={handleChartMetaChange} />
+          <Suspense
+            fallback={
+              <section className="section" aria-busy="true">
+                Loading chart…
+              </section>
+            }
+          >
+            <ChartSection theme={theme} onMetaChange={handleChartMetaChange} />
+          </Suspense>
           <CardsSection />
         </main>
 
